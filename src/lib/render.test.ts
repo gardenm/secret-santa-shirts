@@ -13,6 +13,37 @@ const svg = (w = 825, h = 1050) => `
   <circle cx="400" cy="700" r="180" fill="#2244cc"/>
 </svg>`;
 
+const textSvg = (family: string, w = 825, h = 1050) => `
+<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <text x="60" y="400" font-family="${family}" font-size="120" fill="#000000">HELLO</text>
+</svg>`;
+
+describe("text rendering", () => {
+  it("draws text using the vendored fonts", async () => {
+    // resvg has system fonts disabled, so a font it cannot find renders as
+    // nothing at all rather than as an error. Assert real pixels.
+    const png = await renderDesign(textSvg("Liberation Sans"), { printArea: TEE });
+    const { data } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+    let inked = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 128) inked++;
+
+    expect(inked).toBeGreaterThan(1000);
+  });
+
+  it("falls back to the default family for an unknown font", async () => {
+    // Someone's browser might name a font we do not ship. Better that the
+    // print file shows the words in a substitute face than shows nothing.
+    const png = await renderDesign(textSvg("Some Font Nobody Has"), { printArea: TEE });
+    const { data } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+    let inked = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 128) inked++;
+
+    expect(inked).toBeGreaterThan(1000);
+  });
+});
+
 describe("renderDesign", () => {
   it("rasterises to the garment's print dimensions", async () => {
     const png = await renderDesign(svg(), { printArea: TEE });
@@ -42,6 +73,15 @@ describe("renderDesign", () => {
       .toBuffer({ resolveWithObject: true });
 
     for (let i = 3; i < data.length; i += 4) expect(data[i]).toBe(0);
+  });
+
+  it("refuses a canvas shaped for a different garment", async () => {
+    // A tee-shaped canvas fitted to a hoodie's width comes out 3000x3818
+    // against a 3600 target. The width assertion alone passes, and the shop
+    // would silently crop or squash the result - so the height is checked too.
+    await expect(renderDesign(svg(825, 1050), { printArea: HOODIE })).rejects.toThrow(
+      /aspect ratio does not match/,
+    );
   });
 
   it("scales vector strokes without softening them", async () => {

@@ -153,6 +153,30 @@ export const participants = pgTable(
   (t) => [unique("participants_event_user_uniq").on(t.eventId, t.userId)],
 );
 
+/**
+ * The invite list, which is also the access-control list.
+ *
+ * `participants` requires a `userId`, so there is nowhere to record "invited
+ * but hasn't signed in yet" - the state everyone is in before the event
+ * starts. Auth rejects any sign-in whose email is not here, which means the
+ * invite list needs no separate allowlist and a stranger with the URL cannot
+ * join.
+ */
+export const invites = pgTable(
+  "invites",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** Always stored lowercased; compare against a lowercased input. */
+    email: text("email").notNull(),
+    invitedAt: timestamp("invited_at", { withTimezone: true }).notNull().defaultNow(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  },
+  (t) => [unique("invites_event_email_uniq").on(t.eventId, t.email)],
+);
+
 export const exclusions = pgTable(
   "exclusions",
   {
