@@ -200,6 +200,35 @@ shirts expensive.
 **Order one real shirt before the group order.** It is the only way to catch a
 colour shift, transparency, or scale problem while it is still fixable.
 
+## One exchange per deployment
+
+This runs a single Secret Santa. There is no notion of multiple groups, and
+`db:init` refuses to create a second exchange.
+
+**To run one for another group, deploy a second copy** with its own database.
+It is a free Vercel + Neon project and takes about ten minutes with the setup
+steps above. That copy gets its own API keys and its own bill, which is the
+right split — image generation is billed to whoever deploys.
+
+**Do not lift the limit by deleting the guard in `src/db/init.ts`.** The schema
+is genuinely multi-event — every table is keyed on `eventId`, and `runDraw`,
+`revealGallery`, `outstandingSelections` and `collectExportEntries` all take
+one — but three functions in `src/lib/invites.ts` assume there is only ever a
+single exchange:
+
+| Function | Assumption |
+|---|---|
+| `currentEvent()` | Takes the first `events` row, unfiltered. ~17 call sites treat it as "the" exchange. |
+| `isInvited()` | Matches an email against **all** invites, ignoring which event they belong to. |
+| `participantForUser()` | Returns the first participant row for a user, ignoring event. |
+
+With a second event present, someone invited to one exchange could sign in and
+land in the other's dashboard. That is a privacy bug, not a missing feature.
+
+Doing it properly means scoped URLs (`/e/[slug]/...`), per-event admin, fixing
+those three functions, and deciding who is allowed to create an exchange —
+anyone who can create one can spend the deployer's image-generation credits.
+
 ## Access control
 
 Sign-in is passwordless (magic link) and gated on the invite list: the `signIn`
