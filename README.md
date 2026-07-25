@@ -7,35 +7,48 @@ bundle for one group order.
 
 ## Status
 
-Core libraries and data model are built and tested. The web UI is not yet wired
-up. See [Build order](#build-order) for what remains.
+The exchange is usable end to end: people can sign in, pick a shirt, and be
+assigned someone. The design editor is not built yet.
 
 | Piece | State |
 |---|---|
-| Schema + migrations (12 tables) | Done |
+| Schema + migrations (13 tables) | Done |
 | Assignment draw + tests | Done |
 | Print rendering (SVG to PNG) + tests | Done |
 | Preflight validation + tests | Done |
 | Image generation pipeline + tests | Done |
-| Auth, pages, editor UI | Not started |
+| Auth, invites, garment picker, admin, the draw | Done |
+| Design editor | Not started |
 
-`npm test` — 34 tests, all passing.
+`npm test` — 68 tests, all passing. `npm run build` passes.
 
 ## Setup
 
 ```bash
 npm install
-cp .env.example .env      # fill in DATABASE_URL at minimum
+cp .env.example .env      # DATABASE_URL, AUTH_SECRET and RESEND_API_KEY are required
 npm run db:migrate        # create the tables
 npm run db:seed           # load the garment catalog
+npm run db:init -- "Shirt Santa 2026" 2026-12-01 2026-12-20 you@example.com
 npm run dev
 ```
 
-Tests need no database or API keys:
+`db:init` creates the exchange and invites the first organizer. There is no UI
+for it on purpose: the invite list is the access control, so somebody has to
+exist before anyone can sign in. Whoever signs in first becomes the organizer
+and invites everyone else from `/admin`.
+
+**Resend only sends from a verified domain.** `onboarding@resend.dev` works for
+testing but delivers only to your own address — a confusing failure mode if you
+don't know it going in.
+
+Tests need no database, no Docker and no API keys — integration tests run
+against PGlite, real Postgres compiled to WASM, in-process:
 
 ```bash
 npm test
 npm run typecheck
+npm run build
 ```
 
 ## How it works
@@ -52,15 +65,21 @@ Correctness is enforced in three places, deliberately: the algorithm, a
 `validatePairings` check before writing, and the database itself —
 `CHECK (giver_id <> recipient_id)` plus unique indexes on giver and recipient.
 This is the one bug that would ruin the whole event, so it is worth the
-redundancy.
+redundancy. All three layers are tested, including the database constraints
+themselves, which fire against a real Postgres in `src/db/constraints.test.ts`.
+
+The draw runs in a single transaction: it refuses to run twice, blocks by
+default if anyone hasn't chosen a shirt (their designer would have nothing to
+work from), locks everyone's garment choice, and rolls back completely if the
+exclusions turn out to be unsatisfiable.
 
 Exclusions (couples, roommates) are handled by rejection sampling with a
-capped attempt count and a clear error if the constraints are unsatisfiable.
+capped attempt count and a clear error rather than an infinite loop.
 
 ### Garment choice
 
 Everyone picks their own garment, colour, and size from a seeded catalog
-(`src/db/seed.ts`). A catalog rather than free text because:
+(`src/db/seed-catalog.ts`). A catalog rather than free text because:
 
 - **Print area varies by model.** A hoodie is 3000×3600 px; a tee is 3300×4200.
   Canvas size and every preflight threshold derive from the garment row —
@@ -139,17 +158,27 @@ shirts expensive.
 **Order one real shirt before the group order.** It is the only way to catch a
 colour shift, transparency, or scale problem while it is still fixable.
 
+## Access control
+
+Sign-in is passwordless (magic link) and gated on the invite list: the `signIn`
+callback rejects any address not on it, so there is no second allowlist to
+maintain and someone who finds the URL cannot join. Assignments are read only
+through `getMyAssignment`, always filtered to the caller's own participant id —
+there is deliberately no "fetch assignment by id" for a page to reach for.
+
 ## Build order
 
 1. ~~Skeleton, schema, migrations~~ — done
-2. Auth (magic link via Resend), invite flow, garment picker, admin roster
-3. ~~The draw~~ — done (route + dashboard UI remain)
+2. ~~Auth, invite flow, garment picker, admin roster~~ — done
+3. ~~The draw~~ — done
 4. Design pipeline: canvas, upload, submit route, preflight UI, mockups
 5. Editor v2: brush, text, layers, undo/redo
 6. Deadline enforcement + reminder cron
 7. Export bundle (ZIP + manifest.csv + contact sheet)
 8. Reveal gallery
 
-Steps 1–3 make the Secret Santa usable with no design tooling at all, which is
-the milestone to ship first — sizes and assignments are the time-sensitive
-part.
+Steps 1–3 are done, which means the exchange can be sent out now: people can
+join, pick shirts, and be assigned. The dashboard tells each person who they're
+designing for, that person's garment, colour, size and notes, and — for dark
+shirts — the underbase warning about soft edges. Design tooling can land while
+people are still deciding what to make.
