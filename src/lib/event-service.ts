@@ -211,6 +211,55 @@ export async function getMyAssignment(db: Db, participantId: string) {
 }
 
 /**
+ * Every finished shirt, for the reveal gallery.
+ *
+ * Returns nothing at all before `revealAt`. Gated here rather than in the page
+ * because a client clock is not a lock, and this is the one query where an
+ * early peek spoils the surprise for the whole group at once - so the data
+ * simply does not leave the server until the date has passed.
+ */
+export async function revealGallery(db: Db, eventId: string, now: Date = new Date()) {
+  const [event] = await db.select().from(events).where(eq(events.id, eventId));
+  if (!event) return { revealed: false, revealAt: null, shirts: [] };
+
+  if (now < event.revealAt) {
+    return { revealed: false, revealAt: event.revealAt, shirts: [] };
+  }
+
+  const rows = await db.select().from(assignments).where(eq(assignments.eventId, eventId));
+  const people = await db.query.participants.findMany({
+    where: (p: any, { eq: equals }: any) => equals(p.eventId, eventId),
+    with: { garment: true, colour: true },
+  });
+  const byId = new Map<string, any>(people.map((p: any) => [p.id, p]));
+  const allDesigns = await db.select().from(designs);
+  const designByAssignment = new Map<string, any>(allDesigns.map((d: any) => [d.assignmentId, d]));
+
+  const shirts = rows
+    .map((row: typeof assignments.$inferSelect) => {
+      const design = designByAssignment.get(row.id);
+      const recipient: any = byId.get(row.recipientId);
+      const designer: any = byId.get(row.giverId);
+
+      return {
+        recipientName: recipient?.displayName ?? "",
+        designerName: designer?.displayName ?? "",
+        garmentName: recipient?.garment?.displayName ?? "",
+        colourName: recipient?.colour?.name ?? "",
+        colourHex: recipient?.colour?.hex ?? "#ffffff",
+        previewUrl: design?.previewUrl ?? null,
+        status: design?.status ?? "draft",
+      };
+    })
+    .filter((shirt: { previewUrl: string | null }) => Boolean(shirt.previewUrl))
+    .sort((a: { recipientName: string }, b: { recipientName: string }) =>
+      a.recipientName.localeCompare(b.recipientName),
+    );
+
+  return { revealed: true, revealAt: event.revealAt, shirts };
+}
+
+/**
  * How many AI generations a participant has left.
  *
  * Counted from stored rows rather than tracked client-side, so a refreshed

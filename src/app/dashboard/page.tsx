@@ -122,9 +122,16 @@ export default async function DashboardPage() {
 
       {event && (
         <p className="text-sm text-ink/60">
-          Designs are due {event.deadline.toLocaleDateString()} — {daysUntil(event.deadline)} days
-          away.
+          {daysUntil(event.deadline) >= 0
+            ? `Designs are due ${event.deadline.toLocaleDateString()} — ${daysUntil(event.deadline)} days away.`
+            : `The deadline was ${event.deadline.toLocaleDateString()}.`}
         </p>
+      )}
+
+      {event?.state === "revealed" && (
+        <Link href="/reveal" className="btn-primary">
+          See everyone&rsquo;s shirts
+        </Link>
       )}
     </main>
   );

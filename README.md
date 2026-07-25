@@ -7,9 +7,9 @@ bundle for one group order.
 
 ## Status
 
-Usable end to end: people sign in, pick a shirt, get assigned someone, and
-design their shirt with drawing, AI generation and uploads. What remains is
-the organizer's export bundle, reminder emails and the reveal gallery.
+Complete. People sign in, pick a shirt, get assigned someone, design their
+shirt, get nudged before the deadline, and the organizer exports a print-ready
+bundle for the group order. Everything is revealed afterwards.
 
 | Piece | State |
 |---|---|
@@ -20,9 +20,9 @@ the organizer's export bundle, reminder emails and the reveal gallery.
 | Image generation pipeline + tests | Done |
 | Auth, invites, garment picker, admin, the draw | Done |
 | Design editor: draw, text, upload, AI, preflight | Done |
-| Reminder emails, export bundle, reveal gallery | Not started |
+| Export bundle, reminder emails, reveal gallery | Done |
 
-`npm test` — 97 tests, all passing. `npm run build` passes.
+`npm test` — 130 tests, all passing. `npm run build` passes.
 
 ## Setup
 
@@ -208,19 +208,67 @@ maintain and someone who finds the URL cannot join. Assignments are read only
 through `getMyAssignment`, always filtered to the caller's own participant id —
 there is deliberately no "fetch assignment by id" for a page to reach for.
 
+## Placing the order
+
+`/admin` → **Download bundle**. You get:
+
+```
+prints/01_alex_bella-canvas-3001_black_L_unisex.png   one per shirt
+mockups/                                              previews
+manifest.csv                                          paste into the vendor's form
+contact-sheet.png                                     every design on one image
+README.txt                                            what to tell the printer
+```
+
+Filenames carry garment, colour and size because that is exactly where a dozen
+different shirts get mismatched at the shop. The manifest is grouped by garment
+model, since vendor bulk forms are filled one product at a time.
+
+Two things the export refuses to do quietly:
+
+- **Ship a stale print file.** A design is rendered against the recipient's
+  garment at submit time. If that garment changed afterwards, the stored file
+  no longer matches, and the export refuses rather than letting the shop crop
+  or squash it.
+- **Drop anyone.** People without a finished design are listed at the top of
+  the manifest and in the README. A shirt found missing at the print shop is
+  much worse than one flagged a week early.
+
+**Blind mode** (`?blind=1`) names files by code and puts the name mapping in a
+separate sealed file, so you can place the order without seeing whose shirt is
+whose — useful if you want to be surprised too.
+
+## Reminders
+
+`/api/cron/remind` runs daily (see `vercel.json`), nudging anyone unfinished at
+7, 2 and 1 days out and on the day itself, with a digest to the organizer. It
+also advances the event past the deadline and reveal dates.
+
+The scheduling logic lives in `src/lib/reminders.ts` as a **pure function** and
+is tested properly — an off-by-one there silently means nobody gets reminded
+and you find out on deadline day. The Resend call is a thin wrapper and gets no
+tests. Email degrades to a logged no-op without `RESEND_API_KEY`.
+
 ## Build order
 
-1. ~~Skeleton, schema, migrations~~ — done
-2. ~~Auth, invite flow, garment picker, admin roster~~ — done
-3. ~~The draw~~ — done
-4. Design pipeline: canvas, upload, submit route, preflight UI, mockups
-5. Editor v2: brush, text, layers, undo/redo
-6. Deadline enforcement + reminder cron
-7. Export bundle (ZIP + manifest.csv + contact sheet)
-8. Reveal gallery
+1. ~~Skeleton, schema, migrations~~
+2. ~~Auth, invite flow, garment picker, admin roster~~
+3. ~~The draw~~
+4. ~~Design pipeline: canvas, upload, submit, preflight, mockups~~
+5. ~~Brush and text~~
+6. ~~Deadline enforcement + reminder cron~~
+7. ~~Export bundle~~
+8. ~~Reveal gallery~~
 
-Steps 1–3 are done, which means the exchange can be sent out now: people can
-join, pick shirts, and be assigned. The dashboard tells each person who they're
-designing for, that person's garment, colour, size and notes, and — for dark
-shirts — the underbase warning about soft edges. Design tooling can land while
-people are still deciding what to make.
+### Before you invite anyone
+
+Two things I could not verify while building this:
+
+- **The editor on a real phone.** Print rendering is server-side so the old
+  memory ceiling is gone, but pinch-zoom, drag and brush need hands-on testing,
+  and a good share of the group will design on a phone.
+- **The sign-in flow**, which needs a live Postgres and a Resend key.
+
+And one that matters more than either: **order a single shirt before the group
+order.** It is the only way to catch a colour shift, transparency or scale
+problem while it is still fixable.

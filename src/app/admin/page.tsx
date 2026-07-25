@@ -62,6 +62,29 @@ export default async function AdminPage() {
       />
 
       {drawn.length > 0 && (
+        <section className="card space-y-3">
+          <h2 className="font-medium">Export the order</h2>
+          <p className="text-sm text-ink/70">
+            Print-ready files, a manifest to paste into the vendor&rsquo;s form, mockups and a
+            contact sheet. Anyone without a finished design is listed at the top rather than quietly
+            left out.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <a href="/api/admin/export" className="btn-primary">
+              Download bundle
+            </a>
+            <a href="/api/admin/export?blind=1" className="btn-secondary">
+              Download blind
+            </a>
+          </div>
+          <p className="text-xs text-ink/50">
+            &ldquo;Blind&rdquo; names files by code and puts the name mapping in a separate sealed
+            file, so you can place the order without seeing whose shirt is whose.
+          </p>
+        </section>
+      )}
+
+      {drawn.length > 0 && (
         <p className="text-sm text-ink/60">
           The draw is done — {drawn.length} assignments, and everyone&rsquo;s shirt choice is now
           locked. Re-running it would invalidate any designs already in progress, so it can&rsquo;t
