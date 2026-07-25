@@ -37,7 +37,7 @@ function fontOptions(): ResvgRenderOptions["font"] {
     // that silently substitutes produces a wrong shirt rather than an error.
     loadSystemFonts: false,
     fontDirs: existsSync(FONT_DIR) ? [FONT_DIR] : [],
-    defaultFontFamily: "Inter",
+    defaultFontFamily: "Liberation Sans",
   };
 }
 
@@ -70,6 +70,20 @@ export async function renderDesign(svg: string, options: RenderOptions): Promise
       `Render produced ${rendered.width}x${rendered.height}, expected width ` +
         `${options.printArea.widthPx}. resvg silently ignores its whole options ` +
         `object when given an unknown key - check the options passed here.`,
+    );
+  }
+
+  // Height follows from the SVG's aspect ratio, so a canvas built for the
+  // wrong garment silently yields a mis-shaped print file: a tee-shaped canvas
+  // sent to a hoodie's print area comes out 3000x3818 against a 3600 target.
+  // The shop would crop or squash it. Fail here instead.
+  const drift = Math.abs(rendered.height - options.printArea.heightPx);
+  if (drift > 2) {
+    throw new Error(
+      `Render produced ${rendered.width}x${rendered.height} for a ` +
+        `${options.printArea.widthPx}x${options.printArea.heightPx} print area. The canvas ` +
+        `aspect ratio does not match the recipient's garment - it was probably sized for a ` +
+        `different one.`,
     );
   }
 

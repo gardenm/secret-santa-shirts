@@ -1,5 +1,5 @@
 import { and, eq, isNull } from "drizzle-orm";
-import { assignments, designs, events, exclusions, participants } from "@/db/schema";
+import { assignments, designs, events, exclusions, generations, participants } from "@/db/schema";
 import { drawAssignments, validatePairings } from "./draw";
 import { validateSelection, type Selection } from "./garments";
 
@@ -208,6 +208,29 @@ export async function getMyAssignment(db: Db, participantId: string) {
   const [design] = await db.select().from(designs).where(eq(designs.assignmentId, row.id));
 
   return { assignment: row, recipient, design };
+}
+
+/**
+ * How many AI generations a participant has left.
+ *
+ * Counted from stored rows rather than tracked client-side, so a refreshed
+ * page cannot reset anyone's allowance. This is the only thing standing
+ * between the organizer and an unbounded image-generation bill.
+ */
+export async function generationsRemaining(db: Db, participantId: string): Promise<number> {
+  const [participant] = await db
+    .select()
+    .from(participants)
+    .where(eq(participants.id, participantId));
+  if (!participant) return 0;
+
+  const [event] = await db.select().from(events).where(eq(events.id, participant.eventId));
+  const used = await db
+    .select()
+    .from(generations)
+    .where(eq(generations.participantId, participantId));
+
+  return Math.max(0, (event?.generationCap ?? 0) - used.length);
 }
 
 /** Who still has not chosen a shirt. Safe to show everyone - reveals no pairings. */

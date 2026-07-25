@@ -1,3 +1,33 @@
+/*
+ * The browser loads exactly the same .ttf files that resvg reads from disk
+ * when rendering the print file. Identical files on both sides is what makes
+ * the printed shirt match what the designer saw on screen.
+ */
+@font-face {
+  font-family: "Liberation Sans";
+  src: url("/fonts/LiberationSans-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Liberation Sans";
+  src: url("/fonts/LiberationSans-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Liberation Serif";
+  src: url("/fonts/LiberationSerif-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "DejaVu Sans";
+  src: url("/fonts/DejaVuSans-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

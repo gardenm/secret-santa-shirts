@@ -100,10 +100,13 @@ export default async function DashboardPage() {
             </p>
           )}
 
-          <div className="border-t border-black/10 pt-4">
-            <p className="text-sm text-ink/60">
-              The design tool isn&rsquo;t built yet — it&rsquo;s the next thing being added.
-            </p>
+          <div className="flex items-center gap-3 border-t border-black/10 pt-4">
+            <Link href="/design" className="btn-primary">
+              {mine.design?.status === "submitted" ? "Edit your design" : "Make their design"}
+            </Link>
+            {mine.design?.status === "submitted" && (
+              <span className="text-sm text-pine">Saved and print-ready.</span>
+            )}
           </div>
         </section>
       ) : (

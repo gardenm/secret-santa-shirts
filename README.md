@@ -7,8 +7,9 @@ bundle for one group order.
 
 ## Status
 
-The exchange is usable end to end: people can sign in, pick a shirt, and be
-assigned someone. The design editor is not built yet.
+Usable end to end: people sign in, pick a shirt, get assigned someone, and
+design their shirt with drawing, AI generation and uploads. What remains is
+the organizer's export bundle, reminder emails and the reveal gallery.
 
 | Piece | State |
 |---|---|
@@ -18,9 +19,10 @@ assigned someone. The design editor is not built yet.
 | Preflight validation + tests | Done |
 | Image generation pipeline + tests | Done |
 | Auth, invites, garment picker, admin, the draw | Done |
-| Design editor | Not started |
+| Design editor: draw, text, upload, AI, preflight | Done |
+| Reminder emails, export bundle, reveal gallery | Not started |
 
-`npm test` — 68 tests, all passing. `npm run build` passes.
+`npm test` — 97 tests, all passing. `npm run build` passes.
 
 ## Setup
 
@@ -115,11 +117,51 @@ recipient garment's print size via resvg. This keeps a ~55 MB allocation off
 mobile Safari, makes output deterministic, and means print files can be
 re-rendered at any size later if the chosen vendor wants different dimensions.
 
-> **Gotcha worth knowing:** resvg-js silently discards its *entire* options
-> object when given an unknown key — so one wrong font option drops `fitTo`
-> too and the file renders at design scale with no error. `renderDesign`
-> asserts its output dimensions for exactly this reason. Fonts are passed as
-> `fontDirs`, not buffers.
+`renderDesign` asserts its own output dimensions — both of them — because two
+separate resvg behaviours fail silently in ways that look like success:
+
+> **Gotcha 1:** resvg-js discards its *entire* options object when given an
+> unknown key, so one wrong font option drops `fitTo` too and the file renders
+> at design scale with no error. Fonts are passed as `fontDirs`, not buffers.
+>
+> **Gotcha 2:** resvg renders **nothing** for any image href that is not a data
+> URI — not a relative path, not a remote URL — and reports success. Fabric's
+> `toSVG()` emits raw src URLs, so without `inlineAssets` below, every design
+> containing an image would print blank at exactly the right dimensions.
+>
+> Measured: `data:image/png;base64,…` renders; `/api/assets/<id>` gives 0
+> opaque pixels; `https://example.com/a.png` gives 0 opaque pixels.
+
+### Assets and the design SVG
+
+Uploads and generated images are stored by opaque id (`src/lib/storage.ts`,
+Vercel Blob or a local directory) and served same-origin from
+`/api/assets/[id]`, so the canvas is never tainted.
+
+At submit time `inlineAssets` (`src/lib/svg-assets.ts`) rewrites every `<image>`
+href into a data URI, resolving ids **directly from storage with no HTTP
+request**. Only `/api/assets/<id>` and existing `data:` URIs are accepted;
+anything else throws rather than rendering blank. That rule does double duty —
+the SVG is client-supplied, so refusing to fetch arbitrary URLs removes the
+SSRF surface entirely.
+
+### The editor
+
+`/design` has **no id in the URL**: the assignment comes from the session, so
+ownership is structural rather than a check that could be got wrong.
+
+The canvas is exactly a quarter of the recipient's print area, with their shirt
+colour as the backdrop. Brush strokes and text are vector, so they rasterise
+crisply at 4× rather than being upscaled pixels. Fonts are vendored in
+`public/fonts` and the browser loads the *same* `.ttf` files via `@font-face`
+that resvg reads from disk — identical files on both sides is what makes the
+print file match what the designer saw.
+
+Preflight remedies act on the **source asset**, not the flattened output: soft
+alpha and low resolution belong to raster layers, while vector strokes never
+produce an underbase halo. Every offered fix is tested to actually produce a
+passing file — a button that promises a way out and doesn't deliver is worse
+than no button.
 
 ### Image generation
 
