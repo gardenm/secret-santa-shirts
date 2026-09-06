@@ -104,6 +104,74 @@ describe("blackToTransparent", () => {
 });
 
 describe("generateForPrint", () => {
+  /** Captures what the provider was actually asked for. */
+  function recordingProvider(transparent = true) {
+    const seen: string[] = [];
+    const provider: ImageProvider = {
+      name: "fake",
+      model: "fake-model",
+      async generate(prompt: string) {
+        seen.push(prompt);
+        return {
+          buffer: await png(GENERATED.widthPx, GENERATED.heightPx, "#3355ff"),
+          widthPx: GENERATED.widthPx,
+          heightPx: GENERATED.heightPx,
+          costCents: 7,
+          model: "fake-model",
+          transparent,
+        };
+      },
+    };
+    return { provider, seen };
+  }
+
+  it("sends the expanded print prompt, not the raw subject", async () => {
+    const { provider, seen } = recordingProvider();
+
+    const result = await generateForPrint("a badger on a bicycle", {
+      printArea: TEE,
+      provider,
+      promptContext: { isDark: true, colourName: "Black", style: "linocut" },
+    });
+
+    // The whole prompt frame is worthless if it never reaches the model, and
+    // that failure would be completely invisible from the outside.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("a badger on a bicycle");
+    expect(seen[0]).toMatch(/linocut/i);
+    expect(seen[0]).toMatch(/fully opaque ink/i);
+    expect(seen[0]).toMatch(/no gradients/i);
+    expect(result.prompt).toBe(seen[0]);
+  });
+
+  it("passes the subject through untouched when there is no garment context", async () => {
+    const { provider, seen } = recordingProvider();
+
+    await generateForPrint("a badger on a bicycle", { printArea: TEE, provider });
+
+    expect(seen[0]).toBe("a badger on a bicycle");
+  });
+
+  it("varies the prompt with the recipient's shirt colour", async () => {
+    const dark = recordingProvider();
+    const light = recordingProvider();
+
+    await generateForPrint("a fox", {
+      printArea: TEE,
+      provider: dark.provider,
+      promptContext: { isDark: true, colourName: "Navy" },
+    });
+    await generateForPrint("a fox", {
+      printArea: TEE,
+      provider: light.provider,
+      promptContext: { isDark: false, colourName: "White" },
+    });
+
+    expect(dark.seen[0]).not.toBe(light.seen[0]);
+    expect(dark.seen[0]).toContain("navy");
+    expect(light.seen[0]).toContain("white");
+  });
+
   const fakeProvider = (transparent: boolean): ImageProvider => ({
     name: "fake",
     model: "fake-model",

@@ -186,6 +186,34 @@ keeps it there.
 Note `gpt-image-1` deprecates 2026-10-23; `gpt-image-1.5` supports native
 transparency while `gpt-image-2` does not.
 
+### Prompting away from slop
+
+People type a subject; `src/lib/imagegen/prompt.ts` wraps it in print-appropriate
+direction before it reaches the model. Two things make that work:
+
+**The slop and the print defects are the same problem.** Airbrushed gloss,
+mushy gradients and soft glows are what people mean by AI slop — and on a dark
+garment they are also exactly what the white underbase turns into a chalky
+halo. Asking for flat blocks of solid ink with hard edges and three or four
+colours fixes the aesthetic and the manufacturing at once.
+
+**Named traditions beat adjectives.** "Bold two-colour screen print",
+"linocut", "1970s printed tee" give the model somewhere specific to go.
+"Highly detailed, 8k, masterpiece" gives it nothing and lands it back in its
+house style — which is the slop. The style picker offers five real printing
+traditions.
+
+The frame is garment-aware: a dark shirt asks for bright saturated colour in
+fully opaque ink, a light one for deep colour with strong dark outlines. It
+also asks for a plain empty background, which makes the BiRefNet cutout step
+much cleaner than it would be against a busy scene.
+
+**The technique is model-specific.** The gpt-image models follow explicit
+constraint clauses well, so the prompt ends with a "no gradients, no soft
+glows, no 3D rendering" list. That would be the wrong move on FLUX.2, which has
+no negative prompting and wants the subject first — worth knowing before
+swapping providers.
+
 ## Printing
 
 Files are built to a vendor-agnostic spec — PNG, 300 DPI, transparent
@@ -199,6 +227,35 @@ shirts expensive.
 
 **Order one real shirt before the group order.** It is the only way to catch a
 colour shift, transparency, or scale problem while it is still fixable.
+
+## One exchange per deployment
+
+This runs a single Secret Santa. There is no notion of multiple groups, and
+`db:init` refuses to create a second exchange.
+
+**To run one for another group, deploy a second copy** with its own database.
+It is a free Vercel + Neon project and takes about ten minutes with the setup
+steps above. That copy gets its own API keys and its own bill, which is the
+right split — image generation is billed to whoever deploys.
+
+**Do not lift the limit by deleting the guard in `src/db/init.ts`.** The schema
+is genuinely multi-event — every table is keyed on `eventId`, and `runDraw`,
+`revealGallery`, `outstandingSelections` and `collectExportEntries` all take
+one — but three functions in `src/lib/invites.ts` assume there is only ever a
+single exchange:
+
+| Function | Assumption |
+|---|---|
+| `currentEvent()` | Takes the first `events` row, unfiltered. ~17 call sites treat it as "the" exchange. |
+| `isInvited()` | Matches an email against **all** invites, ignoring which event they belong to. |
+| `participantForUser()` | Returns the first participant row for a user, ignoring event. |
+
+With a second event present, someone invited to one exchange could sign in and
+land in the other's dashboard. That is a privacy bug, not a missing feature.
+
+Doing it properly means scoped URLs (`/e/[slug]/...`), per-event admin, fixing
+those three functions, and deciding who is allowed to create an exchange —
+anyone who can create one can spend the deployer's image-generation credits.
 
 ## Access control
 

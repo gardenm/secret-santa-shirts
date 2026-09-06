@@ -128,3 +128,22 @@ export async function printAreaForDesigner(db: Db, participantId: string) {
     heightPx: mine.recipient.garment.printHPx,
   };
 }
+
+/**
+ * Everything image generation needs about the recipient's shirt: the print
+ * area to size against, and the colour, which decides whether the prompt asks
+ * for bright opaque ink or deep colour with dark outlines.
+ */
+export async function generationContextFor(db: Db, participantId: string) {
+  const mine = await getMyAssignment(db, participantId);
+  if (!mine?.recipient?.garment || !mine.recipient.colour) return null;
+
+  return {
+    printArea: {
+      widthPx: mine.recipient.garment.printWPx,
+      heightPx: mine.recipient.garment.printHPx,
+    },
+    isDark: mine.recipient.colour.isDark as boolean,
+    colourName: mine.recipient.colour.name as string,
+  };
+}

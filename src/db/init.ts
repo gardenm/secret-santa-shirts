@@ -32,10 +32,26 @@ async function main() {
     process.exit(1);
   }
 
+  // This guard is a correctness boundary, not a product preference.
+  //
+  // The schema is genuinely multi-event - everything is keyed on eventId - but
+  // three functions in lib/invites.ts assume there is only ever one:
+  // currentEvent() takes the first row unfiltered, isInvited() matches an email
+  // against ALL invites, and participantForUser() returns the first participant
+  // row for a user. With a second event present, someone invited to one
+  // exchange could sign in and land in the other's dashboard. That is a privacy
+  // bug, not a missing feature.
+  //
+  // Do not remove this to run a second exchange. Deploy a second copy of the
+  // app instead - see the README - or fix those three functions first.
   const existing = await currentEvent(db);
   if (existing) {
     console.error(
-      `An exchange already exists ("${existing.name}"). This deployment runs one at a time.`,
+      `An exchange already exists ("${existing.name}").\n\n` +
+        `This deployment runs one exchange at a time, and that limit is doing real work: the\n` +
+        `sign-in and participant lookups do not filter by event, so a second exchange here would\n` +
+        `let people see each other's. To run one for another group, deploy a second copy of the\n` +
+        `app with its own database - it takes about ten minutes, see the README.`,
     );
     process.exit(1);
   }

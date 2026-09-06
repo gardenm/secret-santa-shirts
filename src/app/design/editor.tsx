@@ -4,6 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as fabric from "fabric";
 import Link from "next/link";
 import type { PreflightResult } from "@/lib/preflight";
+import {
+  PROMPT_HINT,
+  PROMPT_PLACEHOLDER,
+  STYLE_OPTIONS,
+  type PrintStyle,
+} from "@/lib/imagegen/prompt";
 import { PreflightPanel } from "./preflight-panel";
 
 type Props = {
@@ -37,6 +43,7 @@ export function Editor(props: Props) {
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
+  const [style, setStyle] = useState<PrintStyle>("screenprint");
 
   // ---- setup ------------------------------------------------------------
 
@@ -197,7 +204,7 @@ export function Editor(props: Props) {
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, aspect: "portrait" }),
+      body: JSON.stringify({ prompt, style, aspect: "portrait" }),
     });
     const payload = await response.json();
     setBusy(null);
@@ -388,16 +395,45 @@ export function Editor(props: Props) {
           {props.aiEnabled && (
             <section className="card space-y-3">
               <h2 className="font-medium">Or describe one</h2>
+
               <textarea
-                rows={2}
+                rows={3}
                 className="field"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
-                placeholder="A linocut-style badger riding a bicycle, bold shapes, no background"
+                placeholder={PROMPT_PLACEHOLDER}
               />
+              <p className="text-xs text-ink/50">{PROMPT_HINT}</p>
+
+              <div>
+                <label className="label" htmlFor="style">
+                  Print style
+                </label>
+                <select
+                  id="style"
+                  className="field"
+                  value={style}
+                  onChange={(event) => setStyle(event.target.value as PrintStyle)}
+                >
+                  {STYLE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-ink/50">
+                  {STYLE_OPTIONS.find((o) => o.value === style)?.hint}
+                </p>
+              </div>
+
               <button className="btn-secondary" onClick={generate} disabled={Boolean(busy)}>
                 Generate
               </button>
+
+              <p className="text-xs text-ink/50">
+                Generated art is automatically cut out from its background and scaled up for
+                print{props.isDark ? ", and steered toward the bright, hard-edged colour that works on a dark shirt" : ""}.
+              </p>
             </section>
           )}
 

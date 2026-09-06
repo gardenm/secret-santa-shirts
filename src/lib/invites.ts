@@ -32,7 +32,14 @@ export async function addInvites(db: Db, eventId: string, emails: string[]) {
   return { added: rows.length };
 }
 
-/** True if this email may sign in at all. */
+/**
+ * True if this email may sign in at all.
+ *
+ * SINGLE-EVENT ASSUMPTION: matches against every invite in the table, not
+ * against one exchange's. Safe only because db:init refuses to create a second
+ * event - with two, an invite to either would open the door to both. Lifting
+ * that limit means taking an eventId here first.
+ */
 export async function isInvited(db: Db, email: string): Promise<boolean> {
   const [row] = await db.select().from(invites).where(eq(invites.email, normaliseEmail(email)));
   return Boolean(row);
@@ -81,7 +88,14 @@ export async function acceptInvite(
   return created;
 }
 
-/** The participant record for a signed-in user, or null. */
+/**
+ * The participant record for a signed-in user, or null.
+ *
+ * SINGLE-EVENT ASSUMPTION: returns the first participant row for the user
+ * regardless of which exchange it belongs to. With two events, someone in both
+ * would get an arbitrary one - and the session, dashboard and design editor all
+ * hang off this. Lifting the limit means taking an eventId here first.
+ */
 export async function participantForUser(db: Db, userId: string) {
   const [row] = await db.select().from(participants).where(eq(participants.userId, userId));
   return row ?? null;
@@ -118,7 +132,21 @@ export async function rosterFor(db: Db, eventId: string) {
   });
 }
 
-/** The single event this deployment runs. */
+/**
+ * The single event this deployment runs.
+ *
+ * SINGLE-EVENT ASSUMPTION, and the most load-bearing one: takes the first row
+ * with no filter, and around seventeen call sites across the app treat whatever
+ * comes back as "the" exchange. The row order is not even defined, so with two
+ * events this would be arbitrary rather than merely wrong.
+ *
+ * The whole app is otherwise multi-event ready - every table is keyed on
+ * eventId, and runDraw, revealGallery, outstandingSelections and
+ * collectExportEntries all take one. Supporting multiple groups means routing
+ * an event through to here (scoped URLs like /e/[slug]/...), fixing isInvited
+ * and participantForUser below, and deciding who may create an exchange, since
+ * the AI generation keys belong to whoever deploys this.
+ */
 export async function currentEvent(db: Db) {
   const [event] = await db.select().from(events);
   return event ?? null;

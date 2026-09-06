@@ -4,8 +4,14 @@ import { db } from "@/db";
 import { generations } from "@/db/schema";
 import { requireSession } from "@/lib/auth";
 import { generationsRemaining } from "@/lib/event-service";
-import { ImageGenError, generateForPrint, type Aspect } from "@/lib/imagegen";
-import { printAreaForDesigner } from "@/lib/submit";
+import {
+  ImageGenError,
+  generateForPrint,
+  isPrintStyle,
+  type Aspect,
+  type PrintStyle,
+} from "@/lib/imagegen";
+import { generationContextFor } from "@/lib/submit";
 import { assetUrl, putAsset } from "@/lib/storage";
 
 export const maxDuration = 120;
@@ -27,14 +33,22 @@ export async function POST(request: Request) {
     );
   }
 
-  const body = (await request.json()) as { prompt?: string; aspect?: Aspect };
-  const prompt = (body.prompt ?? "").trim();
-  if (prompt.length < 3) {
+  const body = (await request.json()) as {
+    prompt?: string;
+    aspect?: Aspect;
+    style?: unknown;
+  };
+  const subject = (body.prompt ?? "").trim();
+  if (subject.length < 3) {
     return NextResponse.json({ error: "Describe what you'd like to make." }, { status: 400 });
   }
 
-  const printArea = await printAreaForDesigner(db, session.participantId);
-  if (!printArea) {
+  // Validated rather than trusted: an unknown style would otherwise be
+  // interpolated straight into the prompt.
+  const style: PrintStyle = isPrintStyle(body.style) ? body.style : "screenprint";
+
+  const context = await generationContextFor(db, session.participantId);
+  if (!context) {
     return NextResponse.json({ error: "You don't have an assignment yet." }, { status: 400 });
   }
 
@@ -52,16 +66,25 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await generateForPrint(prompt, {
-      printArea,
+    const result = await generateForPrint(subject, {
+      printArea: context.printArea,
       aspect: body.aspect ?? "portrait",
+      // The recipient's shirt colour shapes the prompt: bright opaque ink for
+      // a dark garment, deep colour and dark outlines for a light one.
+      promptContext: {
+        isDark: context.isDark,
+        colourName: context.colourName,
+        style,
+      },
     });
 
     const stored = await putAsset(result.buffer);
 
     await db.insert(generations).values({
       participantId: session.participantId,
-      prompt,
+      // The person's own words, not the expanded prompt - this is the audit
+      // trail, and their subject is what is worth reading back.
+      prompt: subject,
       provider: "openai",
       model: result.model,
       imageUrl: assetUrl(stored.id),
