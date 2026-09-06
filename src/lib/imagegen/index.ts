@@ -1,12 +1,21 @@
 import type { PrintArea } from "../print";
 import { removeBackground } from "./matte";
 import { openAIProvider } from "./providers/openai";
+import { buildPrintPrompt, type PromptContext } from "./prompt";
 import { ImageGenError, type Aspect, type ImageProvider } from "./types";
 import { coversPrintArea, upscaleToFit } from "./upscale";
 
 export { ImageGenError } from "./types";
 export type { Aspect, GeneratedImage, ImageProvider } from "./types";
 export { flattenAlpha, blackToTransparent, removeBackground } from "./matte";
+export {
+  buildPrintPrompt,
+  isPrintStyle,
+  STYLE_OPTIONS,
+  PROMPT_PLACEHOLDER,
+  PROMPT_HINT,
+} from "./prompt";
+export type { PrintStyle, PromptContext } from "./prompt";
 export {
   coversPrintArea,
   isBelowMinimumDpi,
@@ -30,6 +39,8 @@ export type PipelineResult = {
   costCents: number;
   model: string;
   steps: string[];
+  /** The expanded prompt actually sent, kept for the audit trail. */
+  prompt: string;
 };
 
 export function defaultProvider(): ImageProvider {
@@ -37,18 +48,31 @@ export function defaultProvider(): ImageProvider {
 }
 
 export async function generateForPrint(
-  prompt: string,
+  subject: string,
   options: {
     printArea: PrintArea;
     aspect?: Aspect;
     provider?: ImageProvider;
     /** Skip matting when the design is meant to fill a rectangle deliberately. */
     keepBackground?: boolean;
+    /**
+     * The recipient's garment. Drives contrast and edge treatment in the
+     * prompt: a design for a black shirt needs different guidance from one for
+     * a white shirt, and both need the flat-ink framing that keeps output from
+     * looking generic and printing badly.
+     */
+    promptContext?: PromptContext;
   },
 ): Promise<PipelineResult> {
   const provider = options.provider ?? defaultProvider();
   const aspect = options.aspect ?? "portrait";
   const steps: string[] = [];
+
+  // The person types a subject; what reaches the model is that subject wrapped
+  // in print-appropriate direction. See prompt.ts for why.
+  const prompt = options.promptContext
+    ? buildPrintPrompt(subject, options.promptContext)
+    : subject;
 
   const generated = await provider.generate(prompt, aspect);
   steps.push(`generate:${generated.model}`);
@@ -75,6 +99,7 @@ export async function generateForPrint(
     costCents: generated.costCents,
     model: generated.model,
     steps,
+    prompt,
   };
 }
 

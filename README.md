@@ -186,6 +186,34 @@ keeps it there.
 Note `gpt-image-1` deprecates 2026-10-23; `gpt-image-1.5` supports native
 transparency while `gpt-image-2` does not.
 
+### Prompting away from slop
+
+People type a subject; `src/lib/imagegen/prompt.ts` wraps it in print-appropriate
+direction before it reaches the model. Two things make that work:
+
+**The slop and the print defects are the same problem.** Airbrushed gloss,
+mushy gradients and soft glows are what people mean by AI slop — and on a dark
+garment they are also exactly what the white underbase turns into a chalky
+halo. Asking for flat blocks of solid ink with hard edges and three or four
+colours fixes the aesthetic and the manufacturing at once.
+
+**Named traditions beat adjectives.** "Bold two-colour screen print",
+"linocut", "1970s printed tee" give the model somewhere specific to go.
+"Highly detailed, 8k, masterpiece" gives it nothing and lands it back in its
+house style — which is the slop. The style picker offers five real printing
+traditions.
+
+The frame is garment-aware: a dark shirt asks for bright saturated colour in
+fully opaque ink, a light one for deep colour with strong dark outlines. It
+also asks for a plain empty background, which makes the BiRefNet cutout step
+much cleaner than it would be against a busy scene.
+
+**The technique is model-specific.** The gpt-image models follow explicit
+constraint clauses well, so the prompt ends with a "no gradients, no soft
+glows, no 3D rendering" list. That would be the wrong move on FLUX.2, which has
+no negative prompting and wants the subject first — worth knowing before
+swapping providers.
+
 ## Printing
 
 Files are built to a vendor-agnostic spec — PNG, 300 DPI, transparent
