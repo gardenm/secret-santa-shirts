@@ -22,7 +22,7 @@ bundle for the group order. Everything is revealed afterwards.
 | Design editor: draw, text, upload, AI, preflight | Done |
 | Export bundle, reminder emails, reveal gallery | Done |
 
-`npm test` — 149 tests, all passing. `npm run build` passes.
+`npm test` — 156 tests, all passing. `npm run build` passes.
 
 ## Setup
 
@@ -202,6 +202,24 @@ keeps it there.
 
 Note `gpt-image-1` deprecates 2026-10-23; `gpt-image-1.5` supports native
 transparency while `gpt-image-2` does not.
+
+**Where the requests go**, and why there is a choice:
+
+| Env var | Route | Why |
+|---|---|---|
+| `AI_GATEWAY_API_KEY` | Vercel AI Gateway | Hard spend ceiling + usage dashboard |
+| `OPENAI_API_KEY` | OpenAI directly | One-line local setup, no ceiling |
+
+`resolveTarget()` in `src/lib/imagegen/providers/openai.ts` picks between them —
+the Gateway wins when both are set. It also prefixes the model id with its
+creator (`openai/gpt-image-2`) for the Gateway and leaves it bare for OpenAI,
+since each rejects the other's spelling.
+
+Use the Gateway for the deployment. Image generation is the only part of this
+that can run up a real bill, and a budget the provider enforces is a better
+backstop than the per-participant cap in our own code — that cap bounds calls,
+not dollars. **Set the budget in the Vercel dashboard**; there is no spend
+setting in this repo.
 
 ### Prompting away from slop
 
