@@ -26,7 +26,11 @@ bundle for the group order. Everything is revealed afterwards.
 
 ## Setup
 
+Requires **Node 24 or newer** (`.nvmrc` pins 24; `engines` in `package.json` is
+what Vercel reads to pick its runtime).
+
 ```bash
+nvm use                   # or any Node >= 24
 npm install
 cp .env.example .env      # DATABASE_URL, AUTH_SECRET and RESEND_API_KEY are required
 npm run db:migrate        # create the tables
