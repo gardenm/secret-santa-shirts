@@ -9,13 +9,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
 
-    env:
-      # Placeholders, not secrets. `next build` imports the route modules, which
-      # import the db singleton, which refuses to load without a connection
-      # string - nothing here ever opens a connection. The tests use PGlite.
-      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?sslmode=disable
-      BETTER_AUTH_SECRET: ci-placeholder-secret-not-used-for-anything
-      BETTER_AUTH_URL: http://localhost:3000
+    # Deliberately no env vars. The build must succeed without a database, and
+    # CI is where that gets enforced - placeholders here were papering over the
+    # exact failure that stopped this project deploying at all. The tests use
+    # PGlite, which needs no configuration either.
 
     steps:
       - uses: actions/checkout@v4
