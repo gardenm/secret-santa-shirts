@@ -62,6 +62,15 @@ passes `prepare: false` — see the comment there before removing it. Migrations
 prefer the direct URL because DDL through a transaction pool is asking for
 trouble; without Neon, `DATABASE_URL` covers both.
 
+**The build needs no environment at all.** `src/db/index.ts` and `src/lib/auth.ts`
+connect on first *use*, not on import, and the root layout is `force-dynamic`
+because the nav renders the signed-in person's email. This is load-bearing:
+`next build` imports every route module — and, through that layout, the 404 page
+— so a module-scope connection turned a missing `DATABASE_URL` into a build
+failure. It stopped this project deploying at all for a while. CI builds with no
+env vars specifically to keep it that way; `src/db/lazy.test.ts` covers the same
+ground from the other side.
+
 Tests need no database, no Docker and no API keys — integration tests run
 against PGlite, real Postgres compiled to WASM, in-process:
 

@@ -210,6 +210,32 @@ callbacks are the symptom. **Fix:** `type Db = PgDatabase<PgQueryResultHKT, type
 `drizzle-orm/pg-core`, which both the postgres-js and PGlite drivers satisfy. Mechanical, and the
 typecheck then covers the query layer.
 
+### 17. ✅ The build required a database, so nothing ever deployed
+
+Found after the fact, from the real Vercel log — worth recording because it outranks
+everything above in consequence and none of the sixteen items caught it.
+
+`next build` imports every route module to collect page data. `src/db/index.ts` threw
+at module scope on a missing `DATABASE_URL`, and `betterAuth()` in `src/lib/auth.ts`
+ran at module scope too — `drizzleAdapter(db, …)` reads the handle as soon as it is
+constructed. Adding the nav to the root layout (item 3) spread that dependency to
+`/_not-found`, which Next prerenders:
+
+```
+Failed to collect configuration for /_not-found
+  cause: DATABASE_URL is not set.
+```
+
+Every Vercel deployment this project ever attempted failed this way.
+
+**Fixed** by connecting on first use in both files, and marking the root layout
+`force-dynamic` — honest rather than a workaround, since the nav shows the signed-in
+person's email and no page under it was ever static.
+
+The reason it survived a full review: CI set placeholder env vars, and so did I every
+time I built locally. Both of us were papering over it. CI now builds with **no env
+vars at all**, which is the check that would have caught this on day one.
+
 ### 13. ⚠️ Confirm function duration limits against the Vercel plan
 
 `export` declares `maxDuration = 300`, `generate` and `submit` 120. Whether those are honoured
