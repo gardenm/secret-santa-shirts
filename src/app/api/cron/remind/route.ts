@@ -35,7 +35,9 @@ export async function GET(request: Request) {
   if (!event) return NextResponse.json({ ok: true, note: "No exchange set up." });
 
   const now = new Date();
-  const baseUrl = process.env.AUTH_URL ?? "";
+  // Same resolution order as lib/auth.ts, so emailed links and magic links
+  // always point at the same host.
+  const baseUrl = process.env.BETTER_AUTH_URL ?? process.env.AUTH_URL ?? "";
 
   // Advance state first, so a run on deadline day locks the event and the
   // reminder logic sees the state it will actually be in.

@@ -32,7 +32,7 @@ what Vercel reads to pick its runtime).
 ```bash
 nvm use                   # or any Node >= 24
 npm install
-cp .env.example .env      # DATABASE_URL, AUTH_SECRET and RESEND_API_KEY are required
+cp .env.example .env      # DATABASE_URL, BETTER_AUTH_SECRET and RESEND_API_KEY are required
 npm run db:migrate        # create the tables
 npm run db:seed           # load the garment catalog
 npm run db:init -- "Shirt Santa 2026" 2026-12-01 2026-12-20 you@example.com
@@ -263,9 +263,17 @@ anyone who can create one can spend the deployer's image-generation credits.
 
 ## Access control
 
-Sign-in is passwordless (magic link) and gated on the invite list: the `signIn`
-callback rejects any address not on it, so there is no second allowlist to
-maintain and someone who finds the URL cannot join. Assignments are read only
+Sign-in is passwordless (magic link) via **Better Auth**, gated on the invite
+list in two places:
+
+- `databaseHooks.user.create.before` refuses an uninvited address an account.
+- `requireSession` re-checks the invite list on **every request**, because the
+  create hook only fires once. Removing someone from the invite list therefore
+  revokes their access immediately rather than leaving it until their session
+  expires — and unlike a framework hook, this layer is covered by tests.
+
+So there is no second allowlist to maintain, and someone who finds the URL
+cannot join. Assignments are read only
 through `getMyAssignment`, always filtered to the caller's own participant id —
 there is deliberately no "fetch assignment by id" for a page to reach for.
 
