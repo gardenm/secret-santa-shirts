@@ -22,7 +22,7 @@ bundle for the group order. Everything is revealed afterwards.
 | Design editor: draw, text, upload, AI, preflight | Done |
 | Export bundle, reminder emails, reveal gallery | Done |
 
-`npm test` — 130 tests, all passing. `npm run build` passes.
+`npm test` — 149 tests, all passing. `npm run build` passes.
 
 ## Setup
 
@@ -47,6 +47,19 @@ and invites everyone else from `/admin`.
 **Resend only sends from a verified domain.** `onboarding@resend.dev` works for
 testing but delivers only to your own address — a confusing failure mode if you
 don't know it going in.
+
+**If you use Vercel's Neon integration**, don't paste a connection string —
+`vercel env pull .env.local` brings down both URLs it provisions:
+
+| Var | What it is | Used by |
+|---|---|---|
+| `DATABASE_URL` | The **pooled** endpoint (`...-pooler...`) | The app, at runtime |
+| `DATABASE_URL_UNPOOLED` | The direct endpoint | `db:migrate`, when set |
+
+The pooled URL is a *transaction-mode* pooler, which is why `src/db/index.ts`
+passes `prepare: false` — see the comment there before removing it. Migrations
+prefer the direct URL because DDL through a transaction pool is asking for
+trouble; without Neon, `DATABASE_URL` covers both.
 
 Tests need no database, no Docker and no API keys — integration tests run
 against PGlite, real Postgres compiled to WASM, in-process:
