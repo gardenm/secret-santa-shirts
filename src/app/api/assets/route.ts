@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { requireSession } from "@/lib/auth";
+import { allowanceFor, recordPaidCalls } from "@/lib/event-service";
 import { prepareUpload } from "@/lib/imagegen";
 import { printAreaForDesigner } from "@/lib/submit";
 import { assetUrl, putAsset } from "@/lib/storage";
@@ -47,8 +48,20 @@ export async function POST(request: Request) {
 
   const removeBg = form.get("removeBackground") === "true";
 
+  // Uploads can cost money too: background removal always does, and the
+  // upscale behind a phone screenshot usually does, since it needs far more
+  // than the 1.5x local threshold.
+  const allowance = await allowanceFor(db, session.participantId);
+  if (allowance.assists <= 0 && removeBg) {
+    return NextResponse.json(
+      { error: `You've used up the automatic image fixes. Upload without background removal, ` +
+          `or take the background out before uploading.` },
+      { status: 429 },
+    );
+  }
+
   try {
-    const { buffer, steps } = await prepareUpload(Buffer.from(await file.arrayBuffer()), {
+    const { buffer, steps, calls } = await prepareUpload(Buffer.from(await file.arrayBuffer()), {
       printArea,
       removeBg,
     });
@@ -56,6 +69,8 @@ export async function POST(request: Request) {
     const sharpModule = await import("sharp");
     const meta = await sharpModule.default(buffer).metadata();
     const stored = await putAsset(buffer);
+
+    await recordPaidCalls(db, session.participantId, calls, { imageUrl: assetUrl(stored.id) });
 
     return NextResponse.json({
       url: assetUrl(stored.id),

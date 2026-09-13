@@ -2,12 +2,12 @@ import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { participants } from "@/db/schema";
-import { requireSession } from "@/lib/auth";
+import { requirePageSession } from "@/lib/auth";
 import { loadCatalog } from "@/lib/garments";
 import { GarmentPicker, type CatalogEntry } from "./picker";
 
 export default async function JoinPage() {
-  const session = await requireSession();
+  const session = await requirePageSession();
   const catalog = (await loadCatalog(db)) as CatalogEntry[];
 
   const [participant] = await db

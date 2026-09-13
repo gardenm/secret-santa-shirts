@@ -1,12 +1,12 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { assignments, participants } from "@/db/schema";
-import { requireAdmin } from "@/lib/auth";
+import { requirePageAdmin } from "@/lib/auth";
 import { currentEvent, rosterFor } from "@/lib/invites";
-import { AdminForms } from "./forms";
+import { AdminForms, RemoveInvite } from "./forms";
 
 export default async function AdminPage() {
-  await requireAdmin();
+  await requirePageAdmin();
   const event = await currentEvent(db);
 
   if (!event) {
@@ -25,7 +25,8 @@ export default async function AdminPage() {
     .from(participants)
     .where(eq(participants.eventId, event.id));
 
-  const missing = roster.filter((r: { chosenShirt: boolean }) => !r.chosenShirt);
+  const missing = roster.filter((r) => !r.chosenShirt);
+  const alreadyDrawn = drawn.length > 0;
 
   return (
     <main className="space-y-6">
@@ -33,35 +34,50 @@ export default async function AdminPage() {
 
       <section className="card space-y-3">
         <h2 className="font-medium">Who&rsquo;s in</h2>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-ink/60">
-              <th className="pb-2">Email</th>
-              <th className="pb-2">Joined</th>
-              <th className="pb-2">Shirt chosen</th>
-            </tr>
-          </thead>
-          <tbody>
-            {roster.map((row: { email: string; joined: boolean; chosenShirt: boolean }) => (
-              <tr key={row.email} className="border-t border-black/5">
-                <td className="py-2">{row.email}</td>
-                <td>{row.joined ? "yes" : "—"}</td>
-                <td>{row.chosenShirt ? "yes" : "—"}</td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-ink/60">
+                <th className="pb-2">Email</th>
+                <th className="pb-2">Joined</th>
+                <th className="pb-2">Shirt chosen</th>
+                <th className="pb-2" />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {roster.map((row) => (
+                <tr key={row.email} className="border-t border-black/5">
+                  <td className="py-2">{row.email}</td>
+                  <td>{row.joined ? "yes" : "—"}</td>
+                  <td>{row.chosenShirt ? "yes" : "—"}</td>
+                  <td className="text-right">
+                    {/* Only before the draw. Afterwards someone is already
+                        making them a shirt, and removing them would leave a
+                        designer working on a shirt for nobody. */}
+                    {!alreadyDrawn && <RemoveInvite email={row.email} />}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         {roster.length === 0 && <p className="text-sm text-ink/60">Nobody invited yet.</p>}
+        {!alreadyDrawn && roster.length > 0 && (
+          <p className="text-xs text-ink/50">
+            Removing someone takes effect immediately — the invite list is what grants access, and
+            it&rsquo;s re-checked on every request.
+          </p>
+        )}
       </section>
 
       <AdminForms
         people={people}
-        alreadyDrawn={drawn.length > 0}
+        alreadyDrawn={alreadyDrawn}
         missingCount={missing.length}
         deadline={event.deadline.toISOString().slice(0, 10)}
       />
 
-      {drawn.length > 0 && (
+      {alreadyDrawn && (
         <section className="card space-y-3">
           <h2 className="font-medium">Export the order</h2>
           <p className="text-sm text-ink/70">
@@ -84,7 +100,7 @@ export default async function AdminPage() {
         </section>
       )}
 
-      {drawn.length > 0 && (
+      {alreadyDrawn && (
         <p className="text-sm text-ink/60">
           The draw is done — {drawn.length} assignments, and everyone&rsquo;s shirt choice is now
           locked. Re-running it would invalidate any designs already in progress, so it can&rsquo;t

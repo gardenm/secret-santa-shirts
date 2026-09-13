@@ -5,7 +5,6 @@ import {
   jsonb,
   pgEnum,
   pgTable,
-  primaryKey,
   text,
   timestamp,
   unique,
@@ -76,6 +75,23 @@ export const accounts = pgTable("account", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * One row per address that has asked for a sign-in link, so the form cannot be
+ * used to mail-bomb someone.
+ *
+ * Ours rather than Better Auth's: its rate limiter only runs inside the HTTP
+ * handler, and we call `auth.api.signInMagicLink` directly from a server
+ * action, which bypasses it. Kept out of the `verification` table because that
+ * one is keyed by token and its `value` shape is Better Auth's private detail -
+ * matching on it would break silently the day they change it.
+ *
+ * One row per address, updated in place: no growth and nothing to clean up.
+ */
+export const signInAttempts = pgTable("sign_in_attempts", {
+  email: text("email").primaryKey(),
+  lastSentAt: timestamp("last_sent_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** Magic-link tokens live here. Note: `verification`, not `verification_tokens`. */
 export const verifications = pgTable("verification", {
   id: text("id")
@@ -142,8 +158,22 @@ export const events = pgTable("events", {
   deadline: timestamp("deadline", { withTimezone: true }).notNull(),
   revealAt: timestamp("reveal_at", { withTimezone: true }).notNull(),
   state: eventState("state").notNull().default("setup"),
-  /** Per-participant cap on AI generations, bounding spend. */
+  /** Per-participant cap on AI image generations - what a person thinks of as "my images". */
   generationCap: integer("generation_cap").notNull().default(30),
+  /**
+   * Per-participant cap on the paid *assists*: background removal and hosted
+   * upscaling. Separate from generationCap so one generation, which quietly
+   * makes up to two assists of its own, does not eat three of somebody's
+   * thirty images. Generous by default - it exists to stop someone clicking
+   * "remove background" two hundred times, not to ration ordinary use.
+   */
+  assistCap: integer("assist_cap").notNull().default(120),
+  /**
+   * The last local day (YYYY-MM-DD) reminders went out, so a re-triggered or
+   * retried cron run does not nudge everyone twice. A day key rather than a
+   * timestamp because "once per day" means the group's day, not 24 hours.
+   */
+  lastReminderDay: text("last_reminder_day"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -272,12 +302,24 @@ export const designs = pgTable("designs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const generationKind = pgEnum("generation_kind", ["generate", "assist"]);
+
+/**
+ * Every call that cost money, whoever made it.
+ *
+ * Not only image generation, despite the name: background removal and hosted
+ * upscaling are billed too, and counting only generations meant the remedy
+ * buttons in the editor could be clicked without limit. `kind` keeps the two
+ * allowances apart - see events.generationCap and events.assistCap.
+ */
 export const generations = pgTable("generations", {
   id: uuid("id").primaryKey().defaultRandom(),
   participantId: uuid("participant_id")
     .notNull()
     .references(() => participants.id, { onDelete: "cascade" }),
-  prompt: text("prompt").notNull(),
+  kind: generationKind("kind").notNull().default("generate"),
+  /** Empty for assists: there is no prompt behind removing a background. */
+  prompt: text("prompt").notNull().default(""),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   imageUrl: text("image_url"),

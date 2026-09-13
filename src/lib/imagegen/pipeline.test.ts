@@ -8,7 +8,7 @@ import {
   upscaleFactorFor,
   upscaleToFit,
 } from "./upscale";
-import { generateForPrint } from "./index";
+import { FAL_COSTS, createCallLog, generateForPrint, prepareUpload } from "./index";
 import type { ImageProvider } from "./types";
 
 const TEE = { widthPx: 3300, heightPx: 4200 };
@@ -207,5 +207,67 @@ describe("generateForPrint", () => {
 
     const meta = await sharp(result.buffer).metadata();
     expect(meta.height).toBe(TEE.heightPx);
+  });
+});
+
+describe("metering paid calls", () => {
+  const fakeProvider: ImageProvider = {
+    name: "fake",
+    model: "fake-model",
+    async generate() {
+      return {
+        buffer: await png(GENERATED.widthPx, GENERATED.heightPx, "#3355ff"),
+        widthPx: GENERATED.widthPx,
+        heightPx: GENERATED.heightPx,
+        costCents: 7,
+        model: "fake-model",
+        transparent: true,
+      };
+    },
+  };
+
+  it("reports the generation as a paid call", async () => {
+    const result = await generateForPrint("a dinosaur", { printArea: TEE, provider: fakeProvider });
+
+    expect(result.calls).toEqual([
+      { provider: "openai", model: "fake-model", costCents: 7, kind: "generate" },
+    ]);
+  });
+
+  it("does not charge for an upscale that ran locally", async () => {
+    // 2480x3312 -> 3300x4200 is 1.33x, under the hosted threshold, so it is
+    // resampled here for free. The caller cannot know that from outside, which
+    // is the whole reason the pipeline reports its own calls rather than
+    // having each route guess.
+    const result = await generateForPrint("a dinosaur", { printArea: TEE, provider: fakeProvider });
+
+    expect(result.steps).toContain("upscale");
+    expect(result.calls.filter((c) => c.provider === "fal")).toEqual([]);
+    expect(result.costCents).toBe(7);
+  });
+
+  it("does not charge for a hosted upscale that failed and fell back", async () => {
+    // A 400x500 upload needs far more than 1.5x, so it takes the hosted path.
+    // With no FAL_KEY that call fails and a local resize covers for it - and
+    // the person is charged nothing, because nothing was billed. Recording the
+    // call at the point of *attempting* it would get this backwards.
+    const { calls, steps } = await prepareUpload(await png(400, 500, "#3355ff"), {
+      printArea: TEE,
+    });
+
+    expect(steps).toContain("upscale");
+    expect(calls).toEqual([]);
+  });
+
+  it("totals the cost across every call in a run", () => {
+    const log = createCallLog();
+    log.record({ provider: "openai", model: "gpt-image-2", costCents: 7, kind: "generate" });
+    log.record({ provider: "fal", model: "birefnet", costCents: FAL_COSTS.birefnet, kind: "assist" });
+    log.record({ provider: "fal", model: "esrgan", costCents: FAL_COSTS.esrgan, kind: "assist" });
+
+    // The number that used to be reported was the generation alone. Matting
+    // and upscaling are real money, and were invisible.
+    expect(log.calls.reduce((t, c) => t + c.costCents, 0)).toBe(7 + FAL_COSTS.birefnet + FAL_COSTS.esrgan);
+    expect(log.calls.filter((c) => c.kind === "assist")).toHaveLength(2);
   });
 });

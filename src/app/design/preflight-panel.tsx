@@ -24,16 +24,25 @@ const REMEDY_LABELS: Record<Remedy, string> = {
 /** Fixes the server can apply to an image layer. The rest are guidance. */
 const ACTIONABLE: Remedy[] = ["upscale", "remove-background", "flatten-alpha", "make-transparent"];
 
+/**
+ * The two that call a paid model. The other two run on our own server, so they
+ * stay available after the allowance is gone - which is worth saying out loud,
+ * because a disabled button with no explanation is worse than a limit.
+ */
+const PAID: Remedy[] = ["upscale", "remove-background"];
+
 export function PreflightPanel({
   result,
   previewUrl,
   onRemedy,
   busy,
+  assistsLeft,
 }: {
   result: PreflightResult;
   previewUrl: string | null;
   onRemedy: (remedy: Remedy) => void;
   busy: boolean;
+  assistsLeft: number;
 }) {
   const errors = result.findings.filter((f) => f.level === "error");
   const warnings = result.findings.filter((f) => f.level === "warning");
@@ -65,10 +74,22 @@ export function PreflightPanel({
       )}
 
       {errors.map((finding) => (
-        <FindingRow key={finding.code} finding={finding} onRemedy={onRemedy} busy={busy} />
+        <FindingRow
+          key={finding.code}
+          finding={finding}
+          onRemedy={onRemedy}
+          busy={busy}
+          assistsLeft={assistsLeft}
+        />
       ))}
       {warnings.map((finding) => (
-        <FindingRow key={finding.code} finding={finding} onRemedy={onRemedy} busy={busy} />
+        <FindingRow
+          key={finding.code}
+          finding={finding}
+          onRemedy={onRemedy}
+          busy={busy}
+          assistsLeft={assistsLeft}
+        />
       ))}
 
       {warnings.length > 0 && result.ok && (
@@ -84,12 +105,16 @@ function FindingRow({
   finding,
   onRemedy,
   busy,
+  assistsLeft,
 }: {
   finding: Finding;
   onRemedy: (remedy: Remedy) => void;
   busy: boolean;
+  assistsLeft: number;
 }) {
   const canFix = finding.remedy && ACTIONABLE.includes(finding.remedy);
+  const costsMoney = finding.remedy ? PAID.includes(finding.remedy) : false;
+  const outOfAllowance = costsMoney && assistsLeft <= 0;
 
   return (
     <div
@@ -101,11 +126,17 @@ function FindingRow({
       {canFix && (
         <button
           className="btn-secondary mt-2"
-          disabled={busy}
+          disabled={busy || outOfAllowance}
           onClick={() => onRemedy(finding.remedy!)}
         >
           {REMEDY_LABELS[finding.remedy!]}
         </button>
+      )}
+      {outOfAllowance && (
+        <p className="mt-2 text-xs text-ink/50">
+          You&rsquo;ve used up the automatic fixes that run on an outside service. You can still
+          edit the image yourself and upload it again.
+        </p>
       )}
     </div>
   );

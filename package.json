@@ -9,7 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -23,7 +23,7 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
     "@resvg/resvg-js": "^2.6.2",
-    "@vercel/blob": "^0.27.0",
+    "@vercel/blob": "^2.8.0",
     "archiver": "^7.0.1",
     "better-auth": "^1.7.4",
     "dotenv": "^17.4.2",
@@ -38,16 +38,20 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
     "@types/archiver": "^6.0.3",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.4",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.25",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^2.1.8"
   }
 }

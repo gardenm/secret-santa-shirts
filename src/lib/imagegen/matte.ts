@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { FAL_COSTS, type CallLog } from "./meter";
 import { ImageGenError } from "./types";
 
 /**
@@ -15,7 +16,7 @@ import { ImageGenError } from "./types";
 
 const FAL_ENDPOINT = "https://fal.run/fal-ai/birefnet/v2";
 
-export async function removeBackground(image: Buffer): Promise<Buffer> {
+export async function removeBackground(image: Buffer, log?: CallLog): Promise<Buffer> {
   const key = process.env.FAL_KEY;
   if (!key) throw new ImageGenError("FAL_KEY is not set.", "config");
 
@@ -44,6 +45,15 @@ export async function removeBackground(image: Buffer): Promise<Buffer> {
   if (!imageResponse.ok) {
     throw new ImageGenError(`Could not fetch matted image (${imageResponse.status}).`);
   }
+
+  // Recorded only once the call has actually succeeded: charging someone's
+  // allowance for a failed request would be the wrong way round.
+  log?.record({
+    provider: "fal",
+    model: "birefnet",
+    costCents: FAL_COSTS.birefnet,
+    kind: "assist",
+  });
 
   return Buffer.from(await imageResponse.arrayBuffer());
 }

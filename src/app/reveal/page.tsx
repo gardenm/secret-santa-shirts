@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { db } from "@/db";
-import { requireSession } from "@/lib/auth";
+import { requirePageSession } from "@/lib/auth";
+import { formatEventDate } from "@/lib/dates";
 import { revealGallery } from "@/lib/event-service";
 import { currentEvent } from "@/lib/invites";
 
 export default async function RevealPage() {
-  await requireSession();
+  await requirePageSession();
   const event = await currentEvent(db);
 
   if (!event) {
@@ -25,7 +26,8 @@ export default async function RevealPage() {
       <main className="space-y-4">
         <h1 className="text-2xl font-semibold">Not yet</h1>
         <p className="text-ink/70">
-          Everything stays hidden until {revealAt?.toLocaleDateString()}. No peeking — and no, the
+          Everything stays hidden until {revealAt ? formatEventDate(revealAt) : "the reveal date"}.
+          No peeking — and no, the
           page isn&rsquo;t hiding them from you in the browser, they genuinely aren&rsquo;t sent.
         </p>
         <Link href="/dashboard" className="btn-secondary">

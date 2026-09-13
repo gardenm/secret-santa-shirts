@@ -2,15 +2,14 @@ import { and, eq, isNull } from "drizzle-orm";
 import { assignments, designs, events, exclusions, generations, participants } from "@/db/schema";
 import { drawAssignments, validatePairings } from "./draw";
 import { validateSelection, type Selection } from "./garments";
+import type { Db } from "./db-types";
+import type { PaidCall } from "./imagegen/meter";
 
 /**
  * Event operations that must hold together transactionally.
  *
  * Takes `db` rather than importing the singleton so tests can inject PGlite.
  */
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Db = any;
 
 export class EventError extends Error {}
 
@@ -131,22 +130,22 @@ export async function runDraw(db: Db, eventId: string, options: DrawOptions = {}
 
     // Designers genuinely need the garment and size, so this blocks by default.
     const incomplete = roster.filter(
-      (p: typeof participants.$inferSelect) => !p.garmentId || !p.garmentColourId || !p.size || !p.fit,
+      (p) => !p.garmentId || !p.garmentColourId || !p.size || !p.fit,
     );
     if (incomplete.length > 0 && !options.allowIncomplete) {
       throw new EventError(
         `${incomplete.length} ${incomplete.length === 1 ? "person has" : "people have"} not chosen ` +
-          `a shirt yet: ${incomplete.map((p: typeof participants.$inferSelect) => p.displayName).join(", ")}. ` +
+          `a shirt yet: ${incomplete.map((p) => p.displayName).join(", ")}. ` +
           `Their designer would have nothing to work from. Run with "draw anyway" to override.`,
       );
     }
 
     const pairs = await tx.select().from(exclusions).where(eq(exclusions.eventId, eventId));
 
-    const ids: string[] = roster.map((p: typeof participants.$inferSelect) => p.id);
+    const ids: string[] = roster.map((p) => p.id);
     const pairings = drawAssignments<string>(ids, {
       exclusions: pairs.map(
-        (e: typeof exclusions.$inferSelect) => [e.participantA, e.participantB] as [string, string],
+        (e) => [e.participantA, e.participantB] as [string, string],
       ),
     });
 
@@ -172,7 +171,7 @@ export async function runDraw(db: Db, eventId: string, options: DrawOptions = {}
 
     await tx
       .insert(designs)
-      .values(inserted.map((a: typeof assignments.$inferSelect) => ({ assignmentId: a.id })));
+      .values(inserted.map((a) => ({ assignmentId: a.id })));
 
     await tx.update(events).set({ state: "open" }).where(eq(events.id, eventId));
 
@@ -201,7 +200,7 @@ export async function getMyAssignment(db: Db, participantId: string) {
   if (!row) return null;
 
   const recipient = await db.query.participants.findFirst({
-    where: (p: any, { eq: equals }: any) => equals(p.id, row.recipientId),
+    where: (p, { eq: equals }) => equals(p.id, row.recipientId),
     with: { garment: true, colour: true },
   });
 
@@ -228,18 +227,18 @@ export async function revealGallery(db: Db, eventId: string, now: Date = new Dat
 
   const rows = await db.select().from(assignments).where(eq(assignments.eventId, eventId));
   const people = await db.query.participants.findMany({
-    where: (p: any, { eq: equals }: any) => equals(p.eventId, eventId),
+    where: (p, { eq: equals }) => equals(p.eventId, eventId),
     with: { garment: true, colour: true },
   });
-  const byId = new Map<string, any>(people.map((p: any) => [p.id, p]));
+  const byId = new Map(people.map((p) => [p.id, p]));
   const allDesigns = await db.select().from(designs);
-  const designByAssignment = new Map<string, any>(allDesigns.map((d: any) => [d.assignmentId, d]));
+  const designByAssignment = new Map(allDesigns.map((d) => [d.assignmentId, d]));
 
   const shirts = rows
-    .map((row: typeof assignments.$inferSelect) => {
+    .map((row) => {
       const design = designByAssignment.get(row.id);
-      const recipient: any = byId.get(row.recipientId);
-      const designer: any = byId.get(row.giverId);
+      const recipient = byId.get(row.recipientId);
+      const designer = byId.get(row.giverId);
 
       return {
         recipientName: recipient?.displayName ?? "",
@@ -251,27 +250,41 @@ export async function revealGallery(db: Db, eventId: string, now: Date = new Dat
         status: design?.status ?? "draft",
       };
     })
-    .filter((shirt: { previewUrl: string | null }) => Boolean(shirt.previewUrl))
-    .sort((a: { recipientName: string }, b: { recipientName: string }) =>
+    .filter((shirt) => Boolean(shirt.previewUrl))
+    .sort((a, b) =>
       a.recipientName.localeCompare(b.recipientName),
     );
 
   return { revealed: true, revealAt: event.revealAt, shirts };
 }
 
+export type Allowance = {
+  /** New images, which is what a person understands as their allowance. */
+  generations: number;
+  /** Background removals and hosted upscales. */
+  assists: number;
+};
+
 /**
- * How many AI generations a participant has left.
+ * What a participant has left of each paid allowance.
  *
- * Counted from stored rows rather than tracked client-side, so a refreshed
- * page cannot reset anyone's allowance. This is the only thing standing
- * between the organizer and an unbounded image-generation bill.
+ * Counted from stored rows rather than tracked client-side, so a refreshed page
+ * cannot reset anyone's allowance.
+ *
+ * Both numbers matter. Only generations used to be counted, which left three
+ * paid paths unmetered - the two remedy buttons and the upscale behind every
+ * upload - so the editor's "remove background" could be clicked all afternoon
+ * at roughly a cent a time. Kept as two numbers rather than one because a
+ * single generation makes up to two assists internally, and charging someone
+ * three of their thirty images for one picture would be a strange thing to
+ * explain.
  */
-export async function generationsRemaining(db: Db, participantId: string): Promise<number> {
+export async function allowanceFor(db: Db, participantId: string): Promise<Allowance> {
   const [participant] = await db
     .select()
     .from(participants)
     .where(eq(participants.id, participantId));
-  if (!participant) return 0;
+  if (!participant) return { generations: 0, assists: 0 };
 
   const [event] = await db.select().from(events).where(eq(events.id, participant.eventId));
   const used = await db
@@ -279,7 +292,47 @@ export async function generationsRemaining(db: Db, participantId: string): Promi
     .from(generations)
     .where(eq(generations.participantId, participantId));
 
-  return Math.max(0, (event?.generationCap ?? 0) - used.length);
+  const spent = (kind: "generate" | "assist") => used.filter((row) => row.kind === kind).length;
+
+  return {
+    generations: Math.max(0, (event?.generationCap ?? 0) - spent("generate")),
+    assists: Math.max(0, (event?.assistCap ?? 0) - spent("assist")),
+  };
+}
+
+/** How many new images a participant may still generate. */
+export async function generationsRemaining(db: Db, participantId: string): Promise<number> {
+  return (await allowanceFor(db, participantId)).generations;
+}
+
+/**
+ * Writes the paid calls a request made.
+ *
+ * Takes whatever the pipeline metered rather than the route's guess, because
+ * only the pipeline knows whether an upscale went to a hosted model or was
+ * resampled locally for free.
+ */
+export async function recordPaidCalls(
+  db: Db,
+  participantId: string,
+  calls: PaidCall[],
+  context: { prompt?: string; imageUrl?: string } = {},
+): Promise<void> {
+  if (calls.length === 0) return;
+
+  await db.insert(generations).values(
+    calls.map((call) => ({
+      participantId,
+      kind: call.kind,
+      // The person's own words, not the expanded prompt - this is the audit
+      // trail, and their subject is what is worth reading back.
+      prompt: call.kind === "generate" ? (context.prompt ?? "") : "",
+      provider: call.provider,
+      model: call.model,
+      imageUrl: context.imageUrl ?? null,
+      costCents: call.costCents,
+    })),
+  );
 }
 
 /** Who still has not chosen a shirt. Safe to show everyone - reveals no pairings. */

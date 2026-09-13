@@ -8,13 +8,16 @@ import {
   exclusions,
   garmentColours,
   garments,
+  generations,
   participants,
   users,
 } from "@/db/schema";
 import {
   EventError,
+  allowanceFor,
   getMyAssignment,
   outstandingSelections,
+  recordPaidCalls,
   runDraw,
   saveGarmentSelection,
 } from "./event-service";
@@ -323,5 +326,69 @@ describe("outstandingSelections", () => {
 
     const outstanding = await outstandingSelections(db, eventId);
     expect(outstanding.map((p: { displayName: string }) => p.displayName).sort()).toEqual(["Bailey", "Casey", "Devin"]);
+  });
+});
+
+describe("paid-call allowances", () => {
+  const generation = { provider: "openai" as const, model: "gpt-image-2", costCents: 7, kind: "generate" as const };
+  const matte = { provider: "fal" as const, model: "birefnet", costCents: 1, kind: "assist" as const };
+
+  it("starts everyone with the event's two caps", async () => {
+    const allowance = await allowanceFor(db, roster[0].id);
+
+    expect(allowance.generations).toBe(30);
+    expect(allowance.assists).toBe(120);
+  });
+
+  it("counts a fal call against assists, not against images", async () => {
+    // The bug this closes: background removal and hosted upscaling were billed
+    // but never counted, so "remove background" could be clicked all afternoon.
+    await recordPaidCalls(db, roster[0].id, [matte]);
+
+    const allowance = await allowanceFor(db, roster[0].id);
+    expect(allowance.assists).toBe(119);
+    expect(allowance.generations).toBe(30);
+  });
+
+  it("charges one image for a generation, whatever it cost behind the scenes", async () => {
+    // A single generation makes up to two assists of its own. Those are real
+    // money and are recorded, but charging someone three of their thirty
+    // images for one picture would be a strange thing to explain.
+    await recordPaidCalls(db, roster[0].id, [generation, matte], { prompt: "a badger" });
+
+    const allowance = await allowanceFor(db, roster[0].id);
+    expect(allowance.generations).toBe(29);
+    expect(allowance.assists).toBe(119);
+  });
+
+  it("keeps allowances separate per participant", async () => {
+    await recordPaidCalls(db, roster[0].id, [generation, matte], { prompt: "a badger" });
+
+    expect((await allowanceFor(db, roster[1].id)).generations).toBe(30);
+    expect((await allowanceFor(db, roster[1].id)).assists).toBe(120);
+  });
+
+  it("runs out rather than going negative", async () => {
+    await db.update(events).set({ assistCap: 2 }).where(eq(events.id, eventId));
+    await recordPaidCalls(db, roster[0].id, [matte, matte, matte]);
+
+    expect((await allowanceFor(db, roster[0].id)).assists).toBe(0);
+  });
+
+  it("records nothing when a request made no paid calls", async () => {
+    // An upscale under 1.5x is resampled locally for free, and a local remedy
+    // never leaves the server. Neither should touch anyone's allowance.
+    await recordPaidCalls(db, roster[0].id, []);
+
+    const rows = await db.select().from(generations);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("keeps the prompt on generations and leaves it empty for assists", async () => {
+    await recordPaidCalls(db, roster[0].id, [generation, matte], { prompt: "a badger" });
+
+    const rows = await db.select().from(generations);
+    expect(rows.find((r) => r.kind === "generate")?.prompt).toBe("a badger");
+    expect(rows.find((r) => r.kind === "assist")?.prompt).toBe("");
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { addExclusion, drawNames, extendDeadline, invitepeople } from "../actions";
+import { addExclusion, drawNames, extendDeadline, invitePeople, removePerson } from "../actions";
 
 type Person = { id: string; displayName: string };
 
@@ -11,6 +11,29 @@ function Status({ state }: { state: { ok: boolean; error?: string } | null }) {
     <p className="text-sm text-pine">Done.</p>
   ) : (
     <p className="text-sm text-cranberry">{state.error}</p>
+  );
+}
+
+/**
+ * Takes one address off the invite list.
+ *
+ * Its own tiny form so it can sit in a table row. The README has always said
+ * removing someone revokes their access immediately - this is the button that
+ * makes that true rather than theoretical.
+ */
+export function RemoveInvite({ email }: { email: string }) {
+  const [state, action, pending] = useActionState(removePerson, null);
+
+  if (state?.ok) return <span className="text-xs text-ink/40">removed</span>;
+
+  return (
+    <form action={action} className="inline">
+      <input type="hidden" name="email" value={email} />
+      <button className="text-xs text-cranberry underline" disabled={pending}>
+        {pending ? "Removing…" : "Remove"}
+      </button>
+      {state && !state.ok && <span className="ml-2 text-xs text-cranberry">{state.error}</span>}
+    </form>
   );
 }
 
@@ -25,7 +48,7 @@ export function AdminForms({
   missingCount: number;
   deadline: string;
 }) {
-  const [inviteState, inviteAction, inviting] = useActionState(invitepeople, null);
+  const [inviteState, inviteAction, inviting] = useActionState(invitePeople, null);
   const [drawState, drawAction, drawing] = useActionState(drawNames, null);
   const [exclusionState, exclusionAction, excluding] = useActionState(addExclusion, null);
   const [deadlineState, deadlineAction, savingDeadline] = useActionState(extendDeadline, null);

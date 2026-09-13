@@ -1,3 +1,5 @@
+import { dayKeyIn, daysUntilIn, eventTimeZone } from "./dates";
+
 /**
  * Who gets nudged, and when.
  *
@@ -5,6 +7,10 @@
  * an off-by-one silently means nobody is reminded and the organizer finds out
  * on deadline day, so it is the part worth testing properly. Sending is a thin
  * wrapper around someone else's SDK and gets none.
+ *
+ * Days are counted in the group's timezone. They have to be: a deadline is the
+ * end of a local day, so UTC-day arithmetic reads "1 day left" for the whole of
+ * the deadline day and the day-0 nudge never fires.
  */
 
 /** Days before the deadline on which a nudge goes out. */
@@ -28,18 +34,22 @@ export type ReminderPlan = {
   outstanding: string[];
 };
 
-/** Whole days from `today` to `deadline`, both truncated to UTC midnight. */
-export function daysUntil(deadline: Date, today: Date): number {
-  const toDay = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-  return Math.round((toDay(deadline) - toDay(today)) / 86_400_000);
+/** Whole calendar days from `today` to `deadline`, counted in the group's zone. */
+export function daysUntil(
+  deadline: Date,
+  today: Date,
+  timeZone: string = eventTimeZone(),
+): number {
+  return daysUntilIn(deadline, today, timeZone);
 }
 
 export function remindersDue(
   event: { deadline: Date; state: string },
   people: ReminderPerson[],
   today: Date,
+  timeZone: string = eventTimeZone(),
 ): ReminderPlan {
-  const daysLeft = daysUntil(event.deadline, today);
+  const daysLeft = daysUntil(event.deadline, today, timeZone);
   const outstanding = people.filter((p) => !p.hasSubmitted);
 
   const empty: ReminderPlan = {
@@ -83,6 +93,61 @@ export function stateFor(
   if (now >= event.revealAt) return event.state === "revealed" ? null : "revealed";
   if (now >= event.deadline) return event.state === "locked" ? null : "locked";
   return null;
+}
+
+export type ReminderRun = {
+  /** The local day this run belongs to, for the once-a-day record. */
+  today: string;
+  /** State to write, or null to leave it alone. */
+  nextState: "open" | "locked" | "revealed" | null;
+  plan: ReminderPlan;
+  /** True when this day's nudges have already gone out. */
+  alreadySentToday: boolean;
+};
+
+/**
+ * Everything the cron run decides, in one pure function.
+ *
+ * Worth pulling out of the route: the ordering between advancing state and
+ * planning reminders is load-bearing, and getting it wrong is invisible. The
+ * previous version locked the event first and then planned from the *new*
+ * state, so on deadline day `remindersDue` saw "locked" and the day-0 nudge
+ * could never fire. The unit tests passed anyway, because they handed
+ * `remindersDue` a state the route never actually produced.
+ *
+ * Deadlines are the end of a local day, so this now works out: on the morning
+ * of the deadline nothing is locked yet, the last-chance nudge goes out, and
+ * the following run does the locking.
+ */
+export function planReminderRun(
+  event: {
+    deadline: Date;
+    revealAt: Date;
+    state: string;
+    lastReminderDay?: string | null;
+  },
+  people: ReminderPerson[],
+  now: Date,
+  timeZone: string = eventTimeZone(),
+): ReminderRun {
+  const nextState = stateFor(event, now);
+  const plan = remindersDue(
+    { deadline: event.deadline, state: nextState ?? event.state },
+    people,
+    now,
+    timeZone,
+  );
+
+  const today = dayKeyIn(now, timeZone);
+
+  return {
+    today,
+    nextState,
+    plan,
+    // Only nudges are once-a-day; a run that sends nothing has nothing to
+    // repeat, and state still needs advancing either way.
+    alreadySentToday: plan.nudge.length > 0 && event.lastReminderDay === today,
+  };
 }
 
 export function nudgeSubject(daysLeft: number, eventName: string): string {

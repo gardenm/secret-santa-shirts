@@ -1,5 +1,9 @@
 # Project review: what to improve before the exchange runs
 
+> **All sixteen items are implemented.** Kept as the record of what was wrong
+> and why each fix is shaped the way it is. Item 13 is the one that stayed a
+> question rather than a change — see its note.
+
 A step back over the whole project before the first real users arrive. The review covered every
 route, page, server action, lib module and the test harness, plus the installed library defaults
 (Better Auth, Vercel Blob). Nothing here is speculative — each item names the file and the line of
@@ -21,7 +25,7 @@ the `db:init` single-event guard stays.
 
 ## P0 — would bite the real event
 
-### 1. The deadline is at midnight UTC, which is the previous evening in Canada
+### 1. ✅ The deadline is at midnight UTC, which is the previous evening in Canada
 
 `db:init` parses `"2026-12-01"` with `new Date()` → `2026-12-01T00:00:00Z`. `extendDeadline` in
 `src/app/actions.ts:119` does the same from a `<input type="date">`. For a group in Toronto that is
@@ -53,7 +57,7 @@ for it passes because it's given `state: "open"` directly — the state the rout
 is produced on the deadline date and the lock lands the day after. That's the test that would have
 caught this.
 
-### 2. Magic links die after 5 minutes; the email promises 24 hours — *verified*
+### 2. ✅ Magic links die after 5 minutes; the email promises 24 hours — *verified*
 
 Better Auth's `magicLink` plugin defaults `expiresIn` to **300 seconds**
 (`node_modules/better-auth/dist/plugins/magic-link/index.mjs`: `expiresIn || 300`). The email in
@@ -64,7 +68,7 @@ invalid-link error with no explanation, on their very first contact with the app
 plugin options and make the copy say an hour. **Verify:** a test that constructs the auth config
 and asserts the plugin option — cheap, and it pins the copy to the config so they can't drift.
 
-### 3. Signed-out visitors get a crash page, not a sign-in page
+### 3. ✅ Signed-out visitors get a crash page, not a sign-in page
 
 There is no `middleware.ts`, no `error.tsx`, no `not-found.tsx`. Every protected page calls
 `requireSession()`, which **throws** (`src/lib/auth.ts:107`). In production Next strips the
@@ -75,9 +79,13 @@ invite list (`auth.ts:111`): the intended "your access was revoked" outcome rend
 **Fix:**
 - Split the helper: keep `requireSession()` throwing for API routes (they already catch and
   return 401), and add `requirePageSession()` for pages that calls `redirect("/signin")` when
-  signed out and renders a plain "you're no longer part of this exchange" page when uninvited.
-  Update the pages: `dashboard`, `admin`, `design`, `join`, `reveal`. (`page.tsx`'s use of
-  `currentSession` is fine as-is.)
+  signed out. Update the pages: `dashboard`, `admin`, `design`, `join`, `reveal`. (`page.tsx`'s use
+  of `currentSession` is fine as-is.)
+- **Built differently:** being signed in but no longer invited *redirects* to a `/no-access` page
+  rather than throwing a message for `error.tsx` to render. The reason is the same one that makes
+  this item a bug in the first place — the message we would want to show is exactly what production
+  strips. A page can say it in its own words. `requirePageAdmin` sends non-organizers to
+  `/dashboard`, which is theirs.
 - Add `src/app/error.tsx` with a friendly message and a link home, so any *other* exception isn't
   a white page either.
 - **There is no sign-out anywhere** (`grep signOut src` → nothing). Add a sign-out button to the
@@ -86,7 +94,7 @@ invite list (`auth.ts:111`): the intended "your access was revoked" outcome rend
 **Verify:** `npm run build` then `next start` with no session cookie and `curl -I /dashboard` → 307
 to `/signin`. Add a route test if the harness allows; otherwise this is the one to click through.
 
-### 4. The magic-link sign-in has no rate limit, and a failed send looks like success
+### 4. ✅ The magic-link sign-in has no rate limit, and a failed send looks like success
 
 `sendMagicLink` in `src/app/actions.ts:30` calls `auth.api.signInMagicLink` directly. Better
 Auth's rate limiter runs in the HTTP handler (`dist/api/index.mjs:172`), **not** on direct
@@ -99,13 +107,22 @@ nobody is told anything.
 - In the `sendMagicLink` hook, if `result.errors.length > 0 || result.skipped > 0`, `throw` — Better
   Auth turns that into a failed request, and the action's catch still shows the vague message to
   the user, but the failure is now **logged with the Resend error**, so the organizer can find it.
-- Throttle per email: before sending, look for an unexpired row in `verification` for that
-  identifier created in the last 60 s and skip the send if there is one. It's a table we already
-  own; no new infrastructure.
+- Throttle per email, one send per minute.
 
-**Verify:** unit test for the throttle against PGlite: two calls within a minute → one send.
+**Built differently from the sketch above, on purpose.** The plan was to reuse the `verification`
+table, but that table is keyed by *token*, not by email — the address is buried inside a
+JSON `value` whose shape is Better Auth's private detail. Matching on it would have broken silently
+the day they changed it. There is a small `sign_in_attempts` table instead (`signin-policy.ts`),
+one row per address, updated in place.
 
-### 5. Hosted-model calls that cost money are uncapped
+It is also a single atomic upsert with `setWhere` rather than a read followed by a write: five
+simultaneous requests all pass a read-then-write check before any of them writes, and all five
+send. There is a test for exactly that.
+
+The throttle runs in the server action, *before* the link is generated — a limiter that runs after
+the token exists has already done the expensive part.
+
+### 5. ✅ Hosted-model calls that cost money are uncapped
 
 `generationsRemaining()` caps `/api/generate` only. Three other paths call fal (paid) with **no
 cap at all**:
@@ -123,7 +140,7 @@ that counts *all* providers against `generationCap`. Show the remaining count in
 both the Generate button and the remedy buttons. **Verify:** extend `event-service.test.ts` — a fal
 row counts against the cap.
 
-### 6. Vercel Blob is public; designs are supposed to be secret until the reveal
+### 6. ✅ Vercel Blob is public; designs are supposed to be secret until the reveal
 
 `storage.ts:49` uses `access: "public"`. The app gates `/api/assets/[id]` on a session, but the
 underlying blob URL is world-readable to anyone who has it. Ids are UUIDs so it isn't guessable,
@@ -136,7 +153,7 @@ the SDK's authenticated `get`/download path rather than `fetch(meta.url)`. Confi
 which version introduced private access before pinning. **Verify:** after deploy, the raw
 `*.blob.vercel-storage.com` URL of an asset should 403; `/api/assets/<id>` should still serve it.
 
-### 7. The cron endpoint is open when `CRON_SECRET` is unset, and reminders aren't idempotent
+### 7. ✅ The cron endpoint is open when `CRON_SECRET` is unset, and reminders aren't idempotent
 
 `remind/route.ts:30`: `!secret || header === ...` — with the secret unset in production, anyone can
 hit the URL. And `reminders.ts:59` says *"the caller records what it sent"* — the route doesn't
@@ -151,7 +168,7 @@ twice.
 
 ## P1 — CI, correctness hygiene
 
-### 8. There is no CI
+### 8. ✅ There is no CI
 
 No `.github/` directory exists. Add `.github/workflows/ci.yml`:
 - `actions/setup-node` with `node-version-file: .nvmrc`, `npm ci`
@@ -164,7 +181,7 @@ No `.github/` directory exists. Add `.github/workflows/ci.yml`:
 - The suite is ~150 s, nearly all of it `export.test.ts` rendering at print size. Acceptable for
   CI; if it becomes a nuisance, cache one rendered fixture across that file's tests.
 
-### 9. `npm run lint` is broken
+### 9. ✅ `npm run lint` is broken
 
 `next lint` is in `package.json` but ESLint isn't installed and there is no config; running it
 prompts interactively. The `eslint-disable` comments scattered through `src/lib/*.ts` currently
@@ -172,20 +189,20 @@ do nothing. Either add `eslint` + `eslint-config-next` with a flat config and ru
 delete the script. Recommend adding it — the `any`-typed `Db` in five modules is exactly what a
 linter would flag (see 12).
 
-### 10. Tests leave 1,500 files in `.uploads/`
+### 10. ✅ Tests leave 1,500 files in `.uploads/`
 
 `storage.ts` writes to `process.cwd()/.uploads` and tests never clean up: 1,544 files / 45 MB
 after a handful of runs. Gitignored, so it's invisible until the disk fills. **Fix:** honour an
 `UPLOADS_DIR` env, and in `vitest.config.ts` set it to a per-run temp dir via `globalSetup` with
 teardown. This also makes `.uploads` a production-only concept.
 
-### 11. `aspect` from the client isn't validated
+### 11. ✅ `aspect` from the client isn't validated
 
 `generate/route.ts:72`: `body.aspect ?? "portrait"` is passed straight to `SIZES[aspect]`. A
 malformed value makes `size.width` throw a TypeError that surfaces as a 502 with an internal
 message. `style` right next to it *is* validated (`isPrintStyle`) — do the same for `aspect`.
 
-### 12. `type Db = any` in five modules
+### 12. ✅ `type Db = any` in five modules
 
 `event-service.ts`, `submit.ts`, `export.ts`, `invites.ts`, `garments.ts` all take `db: any` so
 tests can inject PGlite. It costs every query its types — the `(p: any, { eq: equals }: any)`
@@ -193,18 +210,21 @@ callbacks are the symptom. **Fix:** `type Db = PgDatabase<PgQueryResultHKT, type
 `drizzle-orm/pg-core`, which both the postgres-js and PGlite drivers satisfy. Mechanical, and the
 typecheck then covers the query layer.
 
-### 13. Confirm function duration limits against the Vercel plan
+### 13. ⚠️ Confirm function duration limits against the Vercel plan
 
 `export` declares `maxDuration = 300`, `generate` and `submit` 120. Whether those are honoured
 depends on the plan and whether Fluid Compute is on. Check the project settings; if the ceiling
 is 60 s, `generate` (a high-quality gpt-image call plus BiRefNet plus upscale) is the one at risk.
-Not a code change until the limit is known.
+
+**Still open, deliberately.** This is a question about your Vercel plan, not a defect in the code —
+there is nothing to change until the real limit is known. Check it in the dashboard before the
+group starts generating.
 
 ---
 
 ## P2 — polish
 
-### 14. The editor canvas doesn't fit a phone
+### 14. ✅ The editor canvas doesn't fit a phone
 
 `DESIGN_SCALE = 4` gives an 825 × 1050 canvas for a tee, on a fixed-size `<canvas>` with no
 responsive styling. On a 390 px phone it overflows horizontally. Fabric supports a CSS-only
@@ -212,14 +232,14 @@ scale: `canvas.setDimensions({ width, height }, { cssOnly: true })` on resize, k
 store at design size so exports are unchanged. "Test the editor on a real phone" is an open item —
 this is what it will find.
 
-### 15. Admin can't remove an invite or fix a garment
+### 15. ✅ Admin can't remove an invite or fix a garment
 
 `adminChangeGarment()` exists in `event-service.ts:67` with no action or UI calling it, and the
 "removing someone from the invite list revokes access immediately" story in the README has no
 button. Both are small forms in `admin/forms.tsx` plus actions. The garment change should email
 the designer (the function already returns who to tell).
 
-### 16. Small things
+### 16. ✅ Small things
 - `invitepeople` → `invitePeople` (`actions.ts:61`).
 - `addExclusion` doesn't check both ids belong to the event; harmless with one event, add the
   check anyway so it survives the multi-event refactor if that ever happens.
@@ -229,8 +249,23 @@ the designer (the function already returns who to tell).
 
 ---
 
-## Suggested order
+## What was verified
 
-1, 2, 3 first — each is a visible failure on day one and none is large. Then 8 (CI) so everything
-after it is checked. Then 5, 7, 4, 6, 10, 11, 12. P2 as time allows. Every item lists its own
-verification; the bar is the same as the rest of this project — assert on real output, not a proxy.
+- **192 tests** (was 156), `npm run lint`, `npm run typecheck`, `npm run build`, all on Node 24.
+- The redirects in item 3 and the cron's 503 in item 7 were checked against a **running production
+  build**, not just reasoned about: every protected page returns 307 to `/signin` with no session.
+- The migration drift check in item 8 was tested **both ways** — no false positive on a clean tree,
+  and it does catch a column added to `schema.ts` without a migration.
+- The `.uploads` directory stays empty after a full suite run.
+
+### What was not verified, and cannot be here
+
+- **Private blob reads.** `access: "private"` and the authenticated `get()` need a real Blob store.
+  After deploying, open an asset's raw `*.blob.vercel-storage.com` URL — it should 403, while
+  `/api/assets/<id>` still works.
+- **Magic-link sign-in end to end**, including that an *uninvited* address is refused. Needs live
+  Neon and a verified Resend domain. It is the security-critical path.
+- **fal metering against the real API.** No `FAL_KEY` in tests, so the hosted paths always fail and
+  fall back; what is tested is that a failed call charges nobody.
+- **The editor on a real phone.** Item 14 is a CSS-only canvas scale, which is the right mechanism,
+  but a 390px screen is the only thing that proves it.

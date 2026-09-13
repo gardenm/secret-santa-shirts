@@ -1,5 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { garmentColours, garments } from "@/db/schema";
+import type { Db } from "./db-types";
 
 /**
  * Garment catalog loading and validation.
@@ -7,9 +8,6 @@ import { garmentColours, garments } from "@/db/schema";
  * Every function takes `db` rather than importing the singleton, so tests can
  * inject an in-process PGlite instance and exercise the real queries.
  */
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Db = any;
 
 export class SelectionError extends Error {}
 

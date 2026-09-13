@@ -1,5 +1,6 @@
 import type { PrintArea } from "../print";
 import { removeBackground } from "./matte";
+import { createCallLog, type PaidCall } from "./meter";
 import { openAIProvider } from "./providers/openai";
 export { aiConfigured, resolveTarget } from "./providers/openai";
 export type { ProviderTarget } from "./providers/openai";
@@ -7,9 +8,11 @@ import { buildPrintPrompt, type PromptContext } from "./prompt";
 import { ImageGenError, type Aspect, type ImageProvider } from "./types";
 import { coversPrintArea, upscaleToFit } from "./upscale";
 
-export { ImageGenError } from "./types";
+export { ImageGenError, isAspect, ASPECTS } from "./types";
 export type { Aspect, GeneratedImage, ImageProvider } from "./types";
 export { flattenAlpha, blackToTransparent, removeBackground } from "./matte";
+export { createCallLog, FAL_COSTS } from "./meter";
+export type { CallLog, CollectedCalls, PaidCall } from "./meter";
 export {
   buildPrintPrompt,
   isPrintStyle,
@@ -43,6 +46,12 @@ export type PipelineResult = {
   steps: string[];
   /** The expanded prompt actually sent, kept for the audit trail. */
   prompt: string;
+  /**
+   * Every call that cost money, including the matte and upscale the caller
+   * cannot see. The route writes these to `generations`, which is what the
+   * spend caps are counted from.
+   */
+  calls: PaidCall[];
 };
 
 export function defaultProvider(): ImageProvider {
@@ -69,6 +78,7 @@ export async function generateForPrint(
   const provider = options.provider ?? defaultProvider();
   const aspect = options.aspect ?? "portrait";
   const steps: string[] = [];
+  const log = createCallLog();
 
   // The person types a subject; what reaches the model is that subject wrapped
   // in print-appropriate direction. See prompt.ts for why.
@@ -78,13 +88,19 @@ export async function generateForPrint(
 
   const generated = await provider.generate(prompt, aspect);
   steps.push(`generate:${generated.model}`);
+  log.record({
+    provider: "openai",
+    model: generated.model,
+    costCents: generated.costCents,
+    kind: "generate",
+  });
 
   let buffer = generated.buffer;
 
   // Skip the matting call when the model already produced real transparency -
   // gpt-image-1.5 can, gpt-image-2 cannot.
   if (!options.keepBackground && !generated.transparent) {
-    buffer = await removeBackground(buffer);
+    buffer = await removeBackground(buffer, log);
     steps.push("matte:birefnet");
   }
 
@@ -92,16 +108,19 @@ export async function generateForPrint(
   // the usability floor, so this is about hitting the ideal rather than
   // rescuing the file - see coversPrintArea.
   if (!coversPrintArea({ widthPx: generated.widthPx, heightPx: generated.heightPx }, options.printArea)) {
-    buffer = await upscaleToFit(buffer, options.printArea);
+    buffer = await upscaleToFit(buffer, options.printArea, { log });
     steps.push("upscale");
   }
 
   return {
     buffer,
-    costCents: generated.costCents,
+    // The whole run, not just the generation - matting and upscaling are real
+    // money too, and were previously invisible.
+    costCents: log.calls.reduce((total, call) => total + call.costCents, 0),
     model: generated.model,
     steps,
     prompt,
+    calls: log.calls,
   };
 }
 
@@ -113,12 +132,13 @@ export async function generateForPrint(
 export async function prepareUpload(
   file: Buffer,
   options: { printArea: PrintArea; removeBg?: boolean },
-): Promise<{ buffer: Buffer; steps: string[] }> {
+): Promise<{ buffer: Buffer; steps: string[]; calls: PaidCall[] }> {
   const steps: string[] = [];
+  const log = createCallLog();
   let buffer = file;
 
   if (options.removeBg) {
-    buffer = await removeBackground(buffer);
+    buffer = await removeBackground(buffer, log);
     steps.push("matte:birefnet");
   }
 
@@ -127,9 +147,11 @@ export async function prepareUpload(
   if (!meta.width || !meta.height) throw new ImageGenError("Could not read the uploaded image.");
 
   if (!coversPrintArea({ widthPx: meta.width, heightPx: meta.height }, options.printArea)) {
-    buffer = await upscaleToFit(buffer, options.printArea);
+    // Often a hosted call: a phone screenshot needs far more than 1.5x. This is
+    // one of the paths that was spending money with nothing counting it.
+    buffer = await upscaleToFit(buffer, options.printArea, { log });
     steps.push("upscale");
   }
 
-  return { buffer, steps };
+  return { buffer, steps, calls: log.calls };
 }

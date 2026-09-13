@@ -8,6 +8,7 @@
 import "dotenv/config";
 import { db } from "./index";
 import { events } from "./schema";
+import { endOfDayIn, eventTimeZone, formatEventDate } from "@/lib/dates";
 import { addInvites, currentEvent } from "@/lib/invites";
 
 async function main() {
@@ -21,10 +22,17 @@ async function main() {
     process.exit(1);
   }
 
-  const deadlineDate = new Date(deadline);
-  const revealDate = new Date(revealAt);
-  if (Number.isNaN(deadlineDate.getTime()) || Number.isNaN(revealDate.getTime())) {
-    console.error("Dates must be parseable, e.g. 2026-12-01.");
+  // Both dates are the END of their day in the group's timezone. "2026-12-01"
+  // means people have all of December 1st, not until the stroke of midnight
+  // that starts it - which in Toronto would be 7pm on November 30th.
+  const timeZone = eventTimeZone();
+  let deadlineDate: Date;
+  let revealDate: Date;
+  try {
+    deadlineDate = endOfDayIn(deadline, timeZone);
+    revealDate = endOfDayIn(revealAt, timeZone);
+  } catch {
+    console.error("Dates must be written as YYYY-MM-DD, e.g. 2026-12-01.");
     process.exit(1);
   }
   if (revealDate < deadlineDate) {
@@ -64,6 +72,9 @@ async function main() {
   const { added } = await addInvites(db, event.id, emails);
 
   console.log(`Created "${event.name}".`);
+  // Echoed back so a timezone surprise is caught here rather than in December.
+  console.log(`Designs due end of ${formatEventDate(deadlineDate, timeZone)} (${timeZone}).`);
+  console.log(`Reveal on ${formatEventDate(revealDate, timeZone)}.`);
   console.log(`Invited ${added} ${added === 1 ? "person" : "people"}.`);
   console.log(`\nThe first to sign in becomes the organizer. Invite the rest from /admin.`);
   process.exit(0);

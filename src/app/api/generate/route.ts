@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { generations } from "@/db/schema";
 import { requireSession } from "@/lib/auth";
-import { generationsRemaining } from "@/lib/event-service";
+import { allowanceFor, recordPaidCalls } from "@/lib/event-service";
 import {
   ImageGenError,
   aiConfigured,
   generateForPrint,
+  isAspect,
   isPrintStyle,
-  type Aspect,
   type PrintStyle,
 } from "@/lib/imagegen";
 import { generationContextFor } from "@/lib/submit";
@@ -36,7 +34,7 @@ export async function POST(request: Request) {
 
   const body = (await request.json()) as {
     prompt?: string;
-    aspect?: Aspect;
+    aspect?: unknown;
     style?: unknown;
   };
   const subject = (body.prompt ?? "").trim();
@@ -45,8 +43,10 @@ export async function POST(request: Request) {
   }
 
   // Validated rather than trusted: an unknown style would otherwise be
-  // interpolated straight into the prompt.
+  // interpolated straight into the prompt, and an unknown aspect would index
+  // the provider's size table with nothing there and throw on `.width`.
   const style: PrintStyle = isPrintStyle(body.style) ? body.style : "screenprint";
+  const aspect = isAspect(body.aspect) ? body.aspect : "portrait";
 
   const context = await generationContextFor(db, session.participantId);
   if (!context) {
@@ -54,7 +54,8 @@ export async function POST(request: Request) {
   }
 
   // Counted server-side, so a refreshed page cannot reset the allowance.
-  const remaining = await generationsRemaining(db, session.participantId);
+  const allowance = await allowanceFor(db, session.participantId);
+  const remaining = allowance.generations;
   if (remaining <= 0) {
     return NextResponse.json(
       {
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
   try {
     const result = await generateForPrint(subject, {
       printArea: context.printArea,
-      aspect: body.aspect ?? "portrait",
+      aspect,
       // The recipient's shirt colour shapes the prompt: bright opaque ink for
       // a dark garment, deep colour and dark outlines for a light one.
       promptContext: {
@@ -81,15 +82,11 @@ export async function POST(request: Request) {
 
     const stored = await putAsset(result.buffer);
 
-    await db.insert(generations).values({
-      participantId: session.participantId,
-      // The person's own words, not the expanded prompt - this is the audit
-      // trail, and their subject is what is worth reading back.
+    // Every paid call the pipeline made, not just the generation: it also
+    // mattes and upscales, and both of those are billed.
+    await recordPaidCalls(db, session.participantId, result.calls, {
       prompt: subject,
-      provider: "openai",
-      model: result.model,
       imageUrl: assetUrl(stored.id),
-      costCents: result.costCents,
     });
 
     return NextResponse.json({

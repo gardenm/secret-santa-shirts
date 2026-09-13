@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { assignments, designs, events, participants, users } from "@/db/schema";
+import { eventTimeZone } from "@/lib/dates";
 import { sendAll, type Message } from "@/lib/email";
 import { currentEvent } from "@/lib/invites";
 import {
   digestBody,
   nudgeBody,
   nudgeSubject,
-  remindersDue,
-  stateFor,
+  planReminderRun,
   type ReminderPerson,
 } from "@/lib/reminders";
 
@@ -27,24 +27,28 @@ export async function GET(request: Request) {
   // Vercel Cron sends this header; without the secret anyone could trigger a
   // send and spam the group.
   const secret = process.env.CRON_SECRET;
-  const authorised =
-    !secret || request.headers.get("authorization") === `Bearer ${secret}`;
-  if (!authorised) return NextResponse.json({ error: "Not authorised." }, { status: 401 });
+
+  // Fail closed in production. Treating "no secret configured" as "everyone is
+  // authorised" meant a deployment that simply forgot to set CRON_SECRET left
+  // the endpoint open to the internet, which is the exact case where nobody
+  // would notice.
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("[cron] CRON_SECRET is not set; refusing to run.");
+      return NextResponse.json({ error: "Not configured." }, { status: 503 });
+    }
+  } else if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Not authorised." }, { status: 401 });
+  }
 
   const event = await currentEvent(db);
   if (!event) return NextResponse.json({ ok: true, note: "No exchange set up." });
 
   const now = new Date();
+  const timeZone = eventTimeZone();
   // Same resolution order as lib/auth.ts, so emailed links and magic links
   // always point at the same host.
   const baseUrl = process.env.BETTER_AUTH_URL ?? process.env.AUTH_URL ?? "";
-
-  // Advance state first, so a run on deadline day locks the event and the
-  // reminder logic sees the state it will actually be in.
-  const nextState = stateFor(event, now);
-  if (nextState) {
-    await db.update(events).set({ state: nextState }).where(eq(events.id, event.id));
-  }
 
   const roster = await db.select().from(participants).where(eq(participants.eventId, event.id));
   const allAssignments = await db
@@ -72,7 +76,25 @@ export async function GET(request: Request) {
     };
   });
 
-  const plan = remindersDue({ deadline: event.deadline, state: nextState ?? event.state }, people, now);
+  const { today, nextState, plan, alreadySentToday } = planReminderRun(event, people, now, timeZone);
+
+  // State is advanced whether or not anything is sent - it is what closes
+  // submissions and opens the reveal.
+  if (nextState) {
+    await db.update(events).set({ state: nextState }).where(eq(events.id, event.id));
+  }
+
+  // Once per local day, whatever fires the run. Vercel retries a failed cron,
+  // and the endpoint can be triggered by hand, so without this a reminder day
+  // nudges everyone twice - and being nagged twice reads as a broken app.
+  if (alreadySentToday) {
+    return NextResponse.json({
+      ok: true,
+      daysLeft: plan.daysLeft,
+      stateChangedTo: nextState,
+      skipped: "Reminders already went out today.",
+    });
+  }
 
   const messages: Message[] = [
     ...plan.nudge
@@ -92,6 +114,12 @@ export async function GET(request: Request) {
   ];
 
   const result = await sendAll(messages);
+
+  // Recorded after the send, so a run that failed to send anything is free to
+  // try again rather than marking the day done.
+  if (plan.nudge.length > 0 && result.sent > 0) {
+    await db.update(events).set({ lastReminderDay: today }).where(eq(events.id, event.id));
+  }
 
   return NextResponse.json({
     ok: true,
