@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/db";
 import { requireSession } from "@/lib/auth";
 import { getMyAssignment } from "@/lib/event-service";
+import { aiConfigured } from "@/lib/imagegen";
 import { DESIGN_SCALE } from "@/lib/print";
 import { Editor } from "./editor";
 
@@ -59,7 +60,7 @@ export default async function DesignPage() {
       }}
       initialCanvasJson={design?.canvasJson ?? null}
       status={design?.status ?? "draft"}
-      aiEnabled={Boolean(process.env.OPENAI_API_KEY)}
+      aiEnabled={aiConfigured()}
     />
   );
 }

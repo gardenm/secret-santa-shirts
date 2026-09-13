@@ -5,7 +5,8 @@ import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { events, exclusions } from "@/db/schema";
-import { requireAdmin, requireSession, signIn as authSignIn } from "@/lib/auth";
+import { headers } from "next/headers";
+import { auth, requireAdmin, requireSession } from "@/lib/auth";
 import { runDraw, saveGarmentSelection } from "@/lib/event-service";
 import { addInvites, currentEvent } from "@/lib/invites";
 
@@ -26,7 +27,10 @@ export async function sendMagicLink(_prev: unknown, formData: FormData) {
   if (!email.includes("@")) return { ok: false as const, error: "Enter an email address." };
 
   try {
-    await authSignIn("resend", { email, redirect: false });
+    await auth.api.signInMagicLink({
+      body: { email, callbackURL: "/dashboard" },
+      headers: await headers(),
+    });
     return { ok: true as const };
   } catch {
     // Deliberately vague: confirming whether an address is on the invite list

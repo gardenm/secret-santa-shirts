@@ -13,6 +13,23 @@ import { eq } from "drizzle-orm";
  * and until now nothing has ever confirmed they fire.
  */
 
+/**
+ * Postgres constraint name behind a failed write.
+ *
+ * drizzle 0.45 wraps driver errors as "Failed query: ..." and moves the
+ * Postgres detail onto `cause`, so matching the message no longer identifies
+ * which constraint fired. Reading `cause.constraint` is better anyway: it is
+ * the structured name rather than a substring of prose.
+ */
+async function violatedConstraint(write: Promise<unknown>): Promise<string | undefined> {
+  try {
+    await write;
+    return undefined;
+  } catch (error) {
+    return (error as { cause?: { constraint?: string } }).cause?.constraint;
+  }
+}
+
 let db: TestDb;
 let eventId: string;
 let people: string[];
@@ -47,13 +64,15 @@ beforeAll(async () => {
 
 describe("assignment constraints", () => {
   it("rejects an assignment where the giver is the recipient", async () => {
-    await expect(
-      db.insert(assignments).values({
-        eventId,
-        giverId: people[0],
-        recipientId: people[0],
-      }),
-    ).rejects.toThrow(/assignments_no_self/);
+    expect(
+      await violatedConstraint(
+        db.insert(assignments).values({
+          eventId,
+          giverId: people[0],
+          recipientId: people[0],
+        }),
+      ),
+    ).toBe("assignments_no_self");
   });
 
   it("rejects a second assignment for the same giver", async () => {
@@ -63,23 +82,27 @@ describe("assignment constraints", () => {
       recipientId: people[1],
     });
 
-    await expect(
-      db.insert(assignments).values({
-        eventId,
-        giverId: people[0],
-        recipientId: people[2],
-      }),
-    ).rejects.toThrow(/assignments_event_giver_uniq/);
+    expect(
+      await violatedConstraint(
+        db.insert(assignments).values({
+          eventId,
+          giverId: people[0],
+          recipientId: people[2],
+        }),
+      ),
+    ).toBe("assignments_event_giver_uniq");
   });
 
   it("rejects two people being assigned the same recipient", async () => {
-    await expect(
-      db.insert(assignments).values({
-        eventId,
-        giverId: people[2],
-        recipientId: people[1], // already taken by people[0] above
-      }),
-    ).rejects.toThrow(/assignments_event_recipient_uniq/);
+    expect(
+      await violatedConstraint(
+        db.insert(assignments).values({
+          eventId,
+          giverId: people[2],
+          recipientId: people[1], // already taken by people[0] above
+        }),
+      ),
+    ).toBe("assignments_event_recipient_uniq");
   });
 });
 

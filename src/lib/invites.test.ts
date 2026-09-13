@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, type TestDb } from "@/db/testing";
-import { events, participants, users } from "@/db/schema";
+import { events, invites, participants, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import {
   acceptInvite,
@@ -8,6 +8,7 @@ import {
   InviteError,
   isInvited,
   normaliseEmail,
+  participantForUser,
   rosterFor,
 } from "./invites";
 
@@ -28,7 +29,12 @@ beforeEach(async () => {
 });
 
 async function makeUser(email: string, name?: string) {
-  const [user] = await db.insert(users).values({ email, name: name ?? null }).returning();
+  // `name` is notNull with a "" default in Better Auth's model, so omit rather
+  // than passing null when the test does not care about it.
+  const [user] = await db
+    .insert(users)
+    .values(name === undefined ? { email } : { email, name })
+    .returning();
   return user;
 }
 
@@ -134,5 +140,25 @@ describe("rosterFor", () => {
     expect(alexRow.joined).toBe(true);
     expect(alexRow.chosenShirt).toBe(false);
     expect(baileyRow.joined).toBe(false);
+  });
+});
+
+describe("access survives only while the invite does", () => {
+  it("stops recognising someone once they are off the list", async () => {
+    // requireSession re-checks isInvited on every request rather than trusting
+    // the sign-in gate, because Better Auth's user.create.before hook fires
+    // only at account creation. Without this, removing someone from the invite
+    // list would leave their access intact indefinitely.
+    await addInvites(db, eventId, ["alex@example.com"]);
+    const user = await makeUser("alex@example.com", "Alex");
+    await acceptInvite(db, { id: user.id, email: user.email, name: "Alex" });
+
+    expect(await isInvited(db, "alex@example.com")).toBe(true);
+
+    await db.delete(invites).where(eq(invites.email, "alex@example.com"));
+
+    // The participant row still exists - they are simply no longer admitted.
+    expect(await isInvited(db, "alex@example.com")).toBe(false);
+    expect(await participantForUser(db, user.id)).not.toBeNull();
   });
 });

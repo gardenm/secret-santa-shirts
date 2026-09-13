@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { auth } from "@/lib/auth";
+import { currentSession } from "@/lib/auth";
 import { db } from "@/db";
 import { currentEvent } from "@/lib/invites";
 
 export default async function Home() {
-  const session = await auth();
+  const session = await currentSession();
   const event = await currentEvent(db).catch(() => null);
 
   if (session?.user) {

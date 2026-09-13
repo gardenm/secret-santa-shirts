@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { contentTypeFor, getAsset, isValidAssetId } from "@/lib/storage";
-import { auth } from "@/lib/auth";
+import { currentSession } from "@/lib/auth";
 
 /**
  * Serves a stored asset.
@@ -10,7 +10,7 @@ import { auth } from "@/lib/auth";
  * storage, so a crafted path cannot escape the asset directory.
  */
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
-  const session = await auth();
+  const session = await currentSession();
   if (!session?.user) return new NextResponse("Not signed in.", { status: 401 });
 
   const { id } = await context.params;

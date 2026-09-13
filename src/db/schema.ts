@@ -12,58 +12,81 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
-import type { AdapterAccountType } from "next-auth/adapters";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
-// Auth.js adapter tables
+// Better Auth tables
+//
+// Shapes and table names come from Better Auth's own model, so its Drizzle
+// adapter can read them. Our exported constants stay plural (`users` rather
+// than `user`) because the rest of the app and every test already refers to
+// them that way; lib/auth.ts maps the two names explicitly when configuring
+// the adapter.
+//
+// Ids are text rather than uuid because that is what Better Auth generates.
+// The $defaultFn keeps direct inserts working - tests and seeds create rows
+// without going through Better Auth, and would otherwise have to invent ids.
 // ---------------------------------------------------------------------------
 
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  name: text("name"),
+export const users = pgTable("user", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => randomUUID()),
+  /** Better Auth treats name as required; default keeps bare inserts working. */
+  name: text("name").notNull().default(""),
   email: text("email").notNull().unique(),
-  emailVerified: timestamp("email_verified", { withTimezone: true }),
+  emailVerified: boolean("email_verified").notNull().default(false),
   image: text("image"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const accounts = pgTable(
-  "accounts",
-  {
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    type: text("type").$type<AdapterAccountType>().notNull(),
-    provider: text("provider").notNull(),
-    providerAccountId: text("provider_account_id").notNull(),
-    refresh_token: text("refresh_token"),
-    access_token: text("access_token"),
-    expires_at: integer("expires_at"),
-    token_type: text("token_type"),
-    scope: text("scope"),
-    id_token: text("id_token"),
-    session_state: text("session_state"),
-  },
-  (t) => [primaryKey({ columns: [t.provider, t.providerAccountId] })],
-);
-
-export const sessions = pgTable("sessions", {
-  sessionToken: text("session_token").primaryKey(),
-  userId: uuid("user_id")
+export const sessions = pgTable("session", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => randomUUID()),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  userId: text("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  expires: timestamp("expires", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const verificationTokens = pgTable(
-  "verification_tokens",
-  {
-    identifier: text("identifier").notNull(),
-    token: text("token").notNull(),
-    expires: timestamp("expires", { withTimezone: true }).notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.identifier, t.token] })],
-);
+export const accounts = pgTable("account", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => randomUUID()),
+  accountId: text("account_id").notNull(),
+  providerId: text("provider_id").notNull(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  idToken: text("id_token"),
+  accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
+  refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
+  scope: text("scope"),
+  password: text("password"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Magic-link tokens live here. Note: `verification`, not `verification_tokens`. */
+export const verifications = pgTable("verification", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => randomUUID()),
+  identifier: text("identifier").notNull(),
+  value: text("value").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ---------------------------------------------------------------------------
 // Garment catalog
@@ -131,7 +154,7 @@ export const participants = pgTable(
     eventId: uuid("event_id")
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     displayName: text("display_name").notNull(),

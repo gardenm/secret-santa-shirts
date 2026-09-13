@@ -22,7 +22,7 @@ bundle for the group order. Everything is revealed afterwards.
 | Design editor: draw, text, upload, AI, preflight | Done |
 | Export bundle, reminder emails, reveal gallery | Done |
 
-`npm test` — 130 tests, all passing. `npm run build` passes.
+`npm test` — 156 tests, all passing. `npm run build` passes.
 
 ## Setup
 
@@ -32,7 +32,7 @@ what Vercel reads to pick its runtime).
 ```bash
 nvm use                   # or any Node >= 24
 npm install
-cp .env.example .env      # DATABASE_URL, AUTH_SECRET and RESEND_API_KEY are required
+cp .env.example .env      # DATABASE_URL, BETTER_AUTH_SECRET and RESEND_API_KEY are required
 npm run db:migrate        # create the tables
 npm run db:seed           # load the garment catalog
 npm run db:init -- "Shirt Santa 2026" 2026-12-01 2026-12-20 you@example.com
@@ -47,6 +47,19 @@ and invites everyone else from `/admin`.
 **Resend only sends from a verified domain.** `onboarding@resend.dev` works for
 testing but delivers only to your own address — a confusing failure mode if you
 don't know it going in.
+
+**If you use Vercel's Neon integration**, don't paste a connection string —
+`vercel env pull .env.local` brings down both URLs it provisions:
+
+| Var | What it is | Used by |
+|---|---|---|
+| `DATABASE_URL` | The **pooled** endpoint (`...-pooler...`) | The app, at runtime |
+| `DATABASE_URL_UNPOOLED` | The direct endpoint | `db:migrate`, when set |
+
+The pooled URL is a *transaction-mode* pooler, which is why `src/db/index.ts`
+passes `prepare: false` — see the comment there before removing it. Migrations
+prefer the direct URL because DDL through a transaction pool is asking for
+trouble; without Neon, `DATABASE_URL` covers both.
 
 Tests need no database, no Docker and no API keys — integration tests run
 against PGlite, real Postgres compiled to WASM, in-process:
@@ -190,6 +203,24 @@ keeps it there.
 Note `gpt-image-1` deprecates 2026-10-23; `gpt-image-1.5` supports native
 transparency while `gpt-image-2` does not.
 
+**Where the requests go**, and why there is a choice:
+
+| Env var | Route | Why |
+|---|---|---|
+| `AI_GATEWAY_API_KEY` | Vercel AI Gateway | Hard spend ceiling + usage dashboard |
+| `OPENAI_API_KEY` | OpenAI directly | One-line local setup, no ceiling |
+
+`resolveTarget()` in `src/lib/imagegen/providers/openai.ts` picks between them —
+the Gateway wins when both are set. It also prefixes the model id with its
+creator (`openai/gpt-image-2`) for the Gateway and leaves it bare for OpenAI,
+since each rejects the other's spelling.
+
+Use the Gateway for the deployment. Image generation is the only part of this
+that can run up a real bill, and a budget the provider enforces is a better
+backstop than the per-participant cap in our own code — that cap bounds calls,
+not dollars. **Set the budget in the Vercel dashboard**; there is no spend
+setting in this repo.
+
 ### Prompting away from slop
 
 People type a subject; `src/lib/imagegen/prompt.ts` wraps it in print-appropriate
@@ -263,9 +294,17 @@ anyone who can create one can spend the deployer's image-generation credits.
 
 ## Access control
 
-Sign-in is passwordless (magic link) and gated on the invite list: the `signIn`
-callback rejects any address not on it, so there is no second allowlist to
-maintain and someone who finds the URL cannot join. Assignments are read only
+Sign-in is passwordless (magic link) via **Better Auth**, gated on the invite
+list in two places:
+
+- `databaseHooks.user.create.before` refuses an uninvited address an account.
+- `requireSession` re-checks the invite list on **every request**, because the
+  create hook only fires once. Removing someone from the invite list therefore
+  revokes their access immediately rather than leaving it until their session
+  expires — and unlike a framework hook, this layer is covered by tests.
+
+So there is no second allowlist to maintain, and someone who finds the URL
+cannot join. Assignments are read only
 through `getMyAssignment`, always filtered to the caller's own participant id —
 there is deliberately no "fetch assignment by id" for a page to reach for.
 

@@ -1,6 +1,8 @@
 import type { PrintArea } from "../print";
 import { removeBackground } from "./matte";
 import { openAIProvider } from "./providers/openai";
+export { aiConfigured, resolveTarget } from "./providers/openai";
+export type { ProviderTarget } from "./providers/openai";
 import { buildPrintPrompt, type PromptContext } from "./prompt";
 import { ImageGenError, type Aspect, type ImageProvider } from "./types";
 import { coversPrintArea, upscaleToFit } from "./upscale";

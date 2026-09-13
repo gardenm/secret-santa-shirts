@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/auth";
 import { generationsRemaining } from "@/lib/event-service";
 import {
   ImageGenError,
+  aiConfigured,
   generateForPrint,
   isPrintStyle,
   type Aspect,
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   }
 
-  if (!process.env.OPENAI_API_KEY) {
+  if (!aiConfigured()) {
     // A clear message rather than a stack trace: the editor hides the panel,
     // but a stale tab could still get here.
     return NextResponse.json(

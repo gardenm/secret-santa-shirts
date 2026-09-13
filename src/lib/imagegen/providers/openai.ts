@@ -18,7 +18,71 @@ import { ImageGenError, type Aspect, type GeneratedImage, type ImageProvider } f
  * pipeline concerns and the model is chosen on quality alone.
  */
 
-const ENDPOINT = "https://api.openai.com/v1/images/generations";
+const OPENAI_ENDPOINT = "https://api.openai.com/v1/images/generations";
+
+/**
+ * Vercel AI Gateway's OpenAI-compatible surface. Image-only models like
+ * gpt-image-2 route through /v1/images/generations - the same endpoint we
+ * already call - so this is a base URL and a model id, not a second client.
+ */
+const GATEWAY_ENDPOINT = "https://ai-gateway.vercel.sh/v1/images/generations";
+
+export type ProviderTarget = {
+  endpoint: string;
+  apiKey: string;
+  /** What goes in the request body. The Gateway wants a creator prefix. */
+  modelId: string;
+  viaGateway: boolean;
+};
+
+type Env = Record<string, string | undefined>;
+
+/** An env var set to "" is how one usually arrives unset; it must not win. */
+function read(env: Env, name: string): string | undefined {
+  const value = env[name];
+  return value && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Where to send a generation request.
+ *
+ * The Gateway wins when configured, because that is where the spend ceiling
+ * lives - a budget the provider enforces beats a counter we maintain. A plain
+ * OPENAI_API_KEY still works, which keeps local development a one-liner.
+ */
+export function resolveTarget(model: string, env: Env = process.env): ProviderTarget {
+  const gatewayKey = read(env, "AI_GATEWAY_API_KEY");
+  if (gatewayKey) {
+    return {
+      endpoint: GATEWAY_ENDPOINT,
+      apiKey: gatewayKey,
+      // Prefixed by creator. Sending a bare id here is a 400 on every request.
+      modelId: `openai/${model}`,
+      viaGateway: true,
+    };
+  }
+
+  const openAiKey = read(env, "OPENAI_API_KEY");
+  if (openAiKey) {
+    return {
+      endpoint: OPENAI_ENDPOINT,
+      apiKey: openAiKey,
+      // Conversely, OpenAI direct does not know what "openai/" means.
+      modelId: model,
+      viaGateway: false,
+    };
+  }
+
+  throw new ImageGenError(
+    "Neither AI_GATEWAY_API_KEY nor OPENAI_API_KEY is set.",
+    "config",
+  );
+}
+
+/** Whether AI generation can run at all. One answer, used by the UI and the API. */
+export function aiConfigured(env: Env = process.env): boolean {
+  return Boolean(read(env, "AI_GATEWAY_API_KEY") ?? read(env, "OPENAI_API_KEY"));
+}
 
 /** Largest 3:4 portrait within gpt-image-2's 8.29M pixel budget, sides /16. */
 const SIZES: Record<Aspect, { width: number; height: number }> = {
@@ -41,21 +105,20 @@ export function openAIProvider(options: OpenAIProviderOptions = {}): ImageProvid
     model,
 
     async generate(prompt: string, aspect: Aspect): Promise<GeneratedImage> {
-      const apiKey = process.env.OPENAI_API_KEY;
-      if (!apiKey) throw new ImageGenError("OPENAI_API_KEY is not set.", "config");
+      const target = resolveTarget(model);
 
       const size = SIZES[aspect];
       // Only 1.5 accepts a transparent background; asking 2 for one is an error.
       const supportsTransparency = model === "gpt-image-1.5";
 
-      const response = await fetch(ENDPOINT, {
+      const response = await fetch(target.endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${target.apiKey}`,
         },
         body: JSON.stringify({
-          model,
+          model: target.modelId,
           prompt,
           size: `${size.width}x${size.height}`,
           quality,
