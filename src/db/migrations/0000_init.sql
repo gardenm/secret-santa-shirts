@@ -1,5 +1,6 @@
 CREATE TYPE "public"."design_status" AS ENUM('draft', 'submitted');--> statement-breakpoint
 CREATE TYPE "public"."event_state" AS ENUM('setup', 'open', 'locked', 'revealed');--> statement-breakpoint
+CREATE TYPE "public"."generation_kind" AS ENUM('generate', 'assist');--> statement-breakpoint
 CREATE TABLE "account" (
 	"id" text PRIMARY KEY NOT NULL,
 	"account_id" text NOT NULL,
@@ -47,6 +48,8 @@ CREATE TABLE "events" (
 	"reveal_at" timestamp with time zone NOT NULL,
 	"state" "event_state" DEFAULT 'setup' NOT NULL,
 	"generation_cap" integer DEFAULT 30 NOT NULL,
+	"assist_cap" integer DEFAULT 120 NOT NULL,
+	"last_reminder_day" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -85,7 +88,8 @@ CREATE TABLE "garments" (
 CREATE TABLE "generations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"participant_id" uuid NOT NULL,
-	"prompt" text NOT NULL,
+	"kind" "generation_kind" DEFAULT 'generate' NOT NULL,
+	"prompt" text DEFAULT '' NOT NULL,
 	"provider" text NOT NULL,
 	"model" text NOT NULL,
 	"image_url" text,
@@ -129,6 +133,11 @@ CREATE TABLE "session" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "session_token_unique" UNIQUE("token")
+);
+--> statement-breakpoint
+CREATE TABLE "sign_in_attempts" (
+	"email" text PRIMARY KEY NOT NULL,
+	"last_sent_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "user" (

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    env:
+      # Placeholders, not secrets. `next build` imports the route modules, which
+      # import the db singleton, which refuses to load without a connection
+      # string - nothing here ever opens a connection. The tests use PGlite.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?sslmode=disable
+      BETTER_AUTH_SECRET: ci-placeholder-secret-not-used-for-anything
+      BETTER_AUTH_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # .nvmrc is the single source of truth; package.json's `engines` is
+          # what Vercel reads. Keep them in step.
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      # ~2.5 minutes, nearly all of it rendering print-resolution PNGs in
+      # export.test.ts. Worth it: that is the code that produces the files the
+      # print shop actually receives.
+      - run: npm test
+
+      - run: npm run build
+
+      # Does src/db/migrations still match src/db/schema.ts?
+      #
+      # Nothing else can catch this. The tests apply the migrations and pass, so
+      # they prove the migrations work - not that they describe the schema the
+      # code is written against. Drift shows up for the first time when someone
+      # runs db:migrate against the real database and a column is missing.
+      - name: Check migrations are up to date
+        run: |
+          npx drizzle-kit generate --name drift-check < /dev/null
+          # --porcelain rather than `git diff`, because a new migration arrives
+          # as an untracked .sql file that a plain diff would not see.
+          if [ -n "$(git status --porcelain -- src/db/migrations)" ]; then
+            echo "::error::schema.ts has changes that are not in a migration."
+            echo "Run 'npm run db:generate' and commit the result."
+            git status --porcelain -- src/db/migrations
+            exit 1
+          fi

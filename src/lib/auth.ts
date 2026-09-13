@@ -3,10 +3,12 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
 import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { accounts, sessions, users, verifications } from "@/db/schema";
 import { sendAll } from "./email";
 import { acceptInvite, isInvited, participantForUser } from "./invites";
+import { MAGIC_LINK_TTL_LABEL, MAGIC_LINK_TTL_SECONDS } from "./signin-policy";
 
 /**
  * Passwordless sign-in, gated on the invite list.
@@ -34,10 +36,15 @@ export const auth = betterAuth({
 
   plugins: [
     magicLink({
+      // Better Auth defaults this to 300 seconds. Anyone who opens the email
+      // after lunch would get an unexplained "invalid link" on their very
+      // first contact with the app. An hour is the promise the email makes.
+      expiresIn: MAGIC_LINK_TTL_SECONDS,
+
       async sendMagicLink({ email, url }) {
         // Reuses the Resend wrapper, so "no RESEND_API_KEY means a logged
         // no-op" behaves the same here as it does for deadline reminders.
-        await sendAll([
+        const result = await sendAll([
           {
             to: email,
             subject: "Your sign-in link",
@@ -46,11 +53,23 @@ export const auth = betterAuth({
               "",
               url,
               "",
-              "It works once and expires in 24 hours. If you didn't ask for it,",
-              "you can ignore this.",
+              `It works once and expires in ${MAGIC_LINK_TTL_LABEL}. If you didn't ask`,
+              "for it, you can ignore this.",
             ].join("\n"),
           },
         ]);
+
+        // Throwing rather than returning quietly. The sign-in form always says
+        // "check your email" - it has to, or it would confirm who is on the
+        // invite list - so an unverified Resend domain would otherwise fail
+        // completely silently and nobody would ever be able to sign in.
+        if (result.errors.length > 0 || result.skipped > 0) {
+          const why = result.errors.join("; ") || "RESEND_API_KEY is not set";
+          console.error(`[auth] could not send a sign-in link to ${email}: ${why}`);
+          throw new APIError("INTERNAL_SERVER_ERROR", {
+            message: "The sign-in email could not be sent.",
+          });
+        }
       },
     }),
   ],
@@ -124,6 +143,44 @@ export async function requireSession(): Promise<AppSession> {
 export async function requireAdmin(): Promise<AppSession> {
   const session = await requireSession();
   if (!session.isAdmin) throw new Error("That is an organizer-only action.");
+  return session;
+}
+
+/**
+ * Session for a *page*, or a redirect to somewhere that makes sense.
+ *
+ * Pages need this rather than `requireSession`. A thrown error from a server
+ * component renders as "Application error: a server-side exception has
+ * occurred" in production, because Next strips the message - so bookmarking
+ * /dashboard while signed out, or just coming back after a session expired,
+ * looked like the app was broken.
+ *
+ * Redirects rather than error pages for the same reason: the message we would
+ * want to show is exactly the thing production throws away. Each destination
+ * can say what happened in its own words.
+ */
+export async function requirePageSession(): Promise<AppSession> {
+  const result = await auth.api.getSession({ headers: await headers() });
+  if (!result?.user?.id || !result.user.email) redirect("/signin");
+
+  // Signed in but no longer welcome. Sending them back to /signin would be an
+  // infinite loop - they already have a valid session, it just isn't enough.
+  if (!(await isInvited(db, result.user.email))) redirect("/no-access");
+
+  const participant = await participantForUser(db, result.user.id);
+  if (!participant) redirect("/no-access");
+
+  return {
+    user: { id: result.user.id, email: result.user.email, name: result.user.name },
+    participantId: participant.id,
+    isAdmin: participant.isAdmin,
+  };
+}
+
+/** Admin-only page. Everyone else goes to the dashboard, which is theirs. */
+export async function requirePageAdmin(): Promise<AppSession> {
+  const session = await requirePageSession();
+  if (!session.isAdmin) redirect("/dashboard");
   return session;
 }
 

@@ -2,16 +2,17 @@ import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { participants } from "@/db/schema";
-import { requireSession } from "@/lib/auth";
+import { requirePageSession } from "@/lib/auth";
+import { formatEventDate } from "@/lib/dates";
 import { getMyAssignment, outstandingSelections } from "@/lib/event-service";
 import { currentEvent } from "@/lib/invites";
-
-function daysUntil(date: Date): number {
-  return Math.ceil((date.getTime() - Date.now()) / 86_400_000);
-}
+// Days left comes from the reminder logic rather than a second calculation
+// here. Two definitions of "days left" is how the dashboard and the nudge
+// email end up disagreeing with each other.
+import { daysUntil } from "@/lib/reminders";
 
 export default async function DashboardPage() {
-  const session = await requireSession();
+  const session = await requirePageSession();
   const event = await currentEvent(db);
 
   const [me] = await db
@@ -120,13 +121,7 @@ export default async function DashboardPage() {
         </section>
       )}
 
-      {event && (
-        <p className="text-sm text-ink/60">
-          {daysUntil(event.deadline) >= 0
-            ? `Designs are due ${event.deadline.toLocaleDateString()} — ${daysUntil(event.deadline)} days away.`
-            : `The deadline was ${event.deadline.toLocaleDateString()}.`}
-        </p>
-      )}
+      {event && <Deadline deadline={event.deadline} />}
 
       {event?.state === "revealed" && (
         <Link href="/reveal" className="btn-primary">
@@ -134,6 +129,21 @@ export default async function DashboardPage() {
         </Link>
       )}
     </main>
+  );
+}
+
+function Deadline({ deadline }: { deadline: Date }) {
+  const days = daysUntil(deadline, new Date());
+  const when = formatEventDate(deadline);
+
+  if (days < 0) return <p className="text-sm text-ink/60">The deadline was {when}.</p>;
+
+  return (
+    <p className="text-sm text-ink/60">
+      {days === 0
+        ? `Designs are due today — end of ${when}.`
+        : `Designs are due ${when} — ${days} ${days === 1 ? "day" : "days"} away.`}
+    </p>
   );
 }
 

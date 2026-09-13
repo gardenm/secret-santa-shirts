@@ -1,17 +1,18 @@
 import Link from "next/link";
 import { db } from "@/db";
-import { requireSession } from "@/lib/auth";
-import { getMyAssignment } from "@/lib/event-service";
+import { requirePageSession } from "@/lib/auth";
+import { allowanceFor, getMyAssignment } from "@/lib/event-service";
 import { aiConfigured } from "@/lib/imagegen";
 import { DESIGN_SCALE } from "@/lib/print";
 import { Editor } from "./editor";
 
 export default async function DesignPage() {
-  const session = await requireSession();
+  const session = await requirePageSession();
 
   // No id in the URL: the assignment comes from the session, so there is
   // nothing to tamper with and no ownership check to get wrong.
   const mine = await getMyAssignment(db, session.participantId);
+  const allowance = await allowanceFor(db, session.participantId);
 
   if (!mine) {
     return (
@@ -61,6 +62,9 @@ export default async function DesignPage() {
       initialCanvasJson={design?.canvasJson ?? null}
       status={design?.status ?? "draft"}
       aiEnabled={aiConfigured()}
+      // Both allowances, so the limits are visible before someone runs into
+      // one. The remedy buttons used to have no limit at all.
+      allowance={allowance}
     />
   );
 }

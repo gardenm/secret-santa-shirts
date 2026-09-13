@@ -9,6 +9,7 @@ import {
   isInvited,
   normaliseEmail,
   participantForUser,
+  removeInvite,
   rosterFor,
 } from "./invites";
 
@@ -140,6 +141,32 @@ describe("rosterFor", () => {
     expect(alexRow.joined).toBe(true);
     expect(alexRow.chosenShirt).toBe(false);
     expect(baileyRow.joined).toBe(false);
+  });
+});
+
+describe("removeInvite", () => {
+  it("revokes access but keeps the participant row", async () => {
+    // The row has to stay: they may already have made someone a shirt, and
+    // deleting the participant would cascade that away.
+    await addInvites(db, eventId, ["alex@example.com"]);
+    const user = await makeUser("alex@example.com", "Alex");
+    await acceptInvite(db, { id: user.id, email: user.email, name: "Alex" });
+
+    expect(await removeInvite(db, eventId, "alex@example.com")).toBe(true);
+
+    expect(await isInvited(db, "alex@example.com")).toBe(false);
+    expect(await participantForUser(db, user.id)).not.toBeNull();
+  });
+
+  it("matches however the address was typed", async () => {
+    await addInvites(db, eventId, ["alex@example.com"]);
+    expect(await removeInvite(db, eventId, "  Alex@Example.COM ")).toBe(true);
+  });
+
+  it("reports when there was nothing to remove", async () => {
+    // So the organizer gets told, rather than a button that looks like it
+    // worked on an address that was never there.
+    expect(await removeInvite(db, eventId, "stranger@example.com")).toBe(false);
   });
 });
 

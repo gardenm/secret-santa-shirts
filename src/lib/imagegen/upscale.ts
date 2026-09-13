@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import type { PrintArea } from "../print";
 import { MIN_DPI, effectiveDpi } from "../print";
+import { FAL_COSTS, type CallLog } from "./meter";
 import { ImageGenError } from "./types";
 
 /**
@@ -79,7 +80,7 @@ export function effectiveDpiFor(
 export async function upscaleToFit(
   image: Buffer,
   target: PrintArea,
-  options: { forceHosted?: boolean } = {},
+  options: { forceHosted?: boolean; log?: CallLog } = {},
 ): Promise<Buffer> {
   const meta = await sharp(image).metadata();
   const source = { widthPx: meta.width ?? 0, heightPx: meta.height ?? 0 };
@@ -92,13 +93,17 @@ export async function upscaleToFit(
 
   if (options.forceHosted || factor > HOSTED_UPSCALE_THRESHOLD) {
     try {
-      return await hostedUpscale(image, factor, target);
+      return await hostedUpscale(image, factor, target, options.log);
     } catch {
-      // A soft upscale beats a failed submission on deadline day.
+      // A soft upscale beats a failed submission on deadline day. Nothing is
+      // recorded: hostedUpscale only logs the call once it has succeeded.
       return localUpscale(image, target);
     }
   }
 
+  // The local path is free, so it is deliberately not metered. This is why the
+  // caller cannot work out the cost for itself - only this function knows
+  // which way the decision went.
   return localUpscale(image, target);
 }
 
@@ -113,7 +118,12 @@ function localUpscale(image: Buffer, target: PrintArea): Promise<Buffer> {
     .toBuffer();
 }
 
-async function hostedUpscale(image: Buffer, factor: number, target: PrintArea): Promise<Buffer> {
+async function hostedUpscale(
+  image: Buffer,
+  factor: number,
+  target: PrintArea,
+  log?: CallLog,
+): Promise<Buffer> {
   const key = process.env.FAL_KEY;
   if (!key) throw new ImageGenError("FAL_KEY is not set.", "config");
 
@@ -133,6 +143,8 @@ async function hostedUpscale(image: Buffer, factor: number, target: PrintArea): 
 
   const fetched = await fetch(json.image.url);
   const upscaled = Buffer.from(await fetched.arrayBuffer());
+
+  log?.record({ provider: "fal", model: "esrgan", costCents: FAL_COSTS.esrgan, kind: "assist" });
 
   // Hosted upscalers work in integer steps, so trim to the exact print area.
   return localUpscale(upscaled, target);

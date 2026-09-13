@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { events, invites, participants, users } from "@/db/schema";
+import type { Db } from "./db-types";
 
 /**
  * The invite list is the access-control list.
@@ -8,9 +9,6 @@ import { events, invites, participants, users } from "@/db/schema";
  * rule that a stranger with the URL cannot join is worth more than a comment
  * saying so.
  */
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Db = any;
 
 export class InviteError extends Error {}
 
@@ -86,6 +84,22 @@ export async function acceptInvite(
   await db.update(invites).set({ acceptedAt: new Date() }).where(eq(invites.id, invite.id));
 
   return created;
+}
+
+/**
+ * Takes an address off the invite list.
+ *
+ * Revokes access immediately, because requireSession re-checks the list on
+ * every request. The participant row stays: they may already have made someone
+ * a shirt, and deleting that would cascade it away.
+ */
+export async function removeInvite(db: Db, eventId: string, email: string): Promise<boolean> {
+  const removed = await db
+    .delete(invites)
+    .where(and(eq(invites.eventId, eventId), eq(invites.email, normaliseEmail(email))))
+    .returning({ email: invites.email });
+
+  return removed.length > 0;
 }
 
 /**

@@ -1,19 +1,18 @@
 import { eq } from "drizzle-orm";
 import { designs, events } from "@/db/schema";
+import { formatEventDate } from "./dates";
 import { getMyAssignment } from "./event-service";
 import { preflight, type PreflightResult } from "./preflight";
 import { renderDesign, renderPreview } from "./render";
 import { assetUrl, putAsset } from "./storage";
 import { inlineAssets } from "./svg-assets";
+import type { Db } from "./db-types";
 
 /**
  * Turning a canvas into a print-ready file.
  *
  * Takes `db` rather than importing the singleton so tests can inject PGlite.
  */
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Db = any;
 
 export class SubmitError extends Error {}
 
@@ -51,8 +50,8 @@ export async function submitDesign(
   const [event] = await db.select().from(events).where(eq(events.id, recipient.eventId));
   if (event && event.deadline.getTime() < Date.now()) {
     throw new SubmitError(
-      `The deadline passed on ${event.deadline.toLocaleDateString()}. Ask the organizer to extend ` +
-        `it if you still need to submit.`,
+      `The deadline passed at the end of ${formatEventDate(event.deadline)}. Ask the organizer to ` +
+        `extend it if you still need to submit.`,
     );
   }
   if (event && (event.state === "locked" || event.state === "revealed")) {

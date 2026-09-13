@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import sharp from "sharp";
-import { assignments, designs, events, participants } from "@/db/schema";
+import { assignments, designs, events } from "@/db/schema";
 import { getAsset } from "./storage";
+import type { Db } from "./db-types";
 
 /**
  * The order bundle.
@@ -14,9 +15,6 @@ import { getAsset } from "./storage";
  * (a thin archiver call). Tests assert on the entry list rather than on zip
  * bytes, which tests what matters rather than someone else's compression.
  */
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Db = any;
 
 export class ExportError extends Error {}
 
@@ -76,7 +74,7 @@ export async function collectExportEntries(
   if (!event) throw new ExportError("Event not found.");
 
   const roster = await db.query.participants.findMany({
-    where: (p: any, { eq: equals }: any) => equals(p.eventId, eventId),
+    where: (p, { eq: equals }) => equals(p.eventId, eventId),
     with: { garment: true, colour: true },
   });
 
@@ -91,8 +89,8 @@ export async function collectExportEntries(
   }
 
   const allDesigns = await db.select().from(designs);
-  const designByAssignment = new Map<string, any>(allDesigns.map((d: any) => [d.assignmentId, d]));
-  const nameById = new Map<string, string>(roster.map((p: any) => [p.id, p.displayName]));
+  const designByAssignment = new Map(allDesigns.map((d) => [d.assignmentId, d]));
+  const nameById = new Map<string, string>(roster.map((p) => [p.id, p.displayName]));
 
   const entries: ExportEntry[] = [];
   const missing: string[] = [];
@@ -101,13 +99,13 @@ export async function collectExportEntries(
 
   // Ordered by name so the bundle is stable between exports - a shop working
   // from a re-downloaded zip should see the same numbering.
-  const ordered = [...roster].sort((a: any, b: any) =>
+  const ordered = [...roster].sort((a, b) =>
     a.displayName.localeCompare(b.displayName),
   );
 
   let index = 0;
   for (const person of ordered) {
-    const assignment = allAssignments.find((a: any) => a.recipientId === person.id);
+    const assignment = allAssignments.find((a) => a.recipientId === person.id);
     const design = assignment ? designByAssignment.get(assignment.id) : undefined;
 
     if (!assignment || !design || design.status !== "submitted" || !design.printFileUrl) {
@@ -192,9 +190,9 @@ export async function collectExportEntries(
         ["code,recipient,designer"]
           .concat(
             ordered
-              .filter((p: any) => !missing.includes(p.displayName))
-              .map((p: any) => {
-                const assignment = allAssignments.find((a: any) => a.recipientId === p.id);
+              .filter((p) => !missing.includes(p.displayName))
+              .map((p) => {
+                const assignment = allAssignments.find((a) => a.recipientId === p.id);
                 const designer = assignment ? nameById.get(assignment.giverId) : "";
                 return `${codeFor(p.id)},${csv(p.displayName)},${csv(String(designer ?? ""))}`;
               }),

@@ -1,4 +1,17 @@
-export type Aspect = "portrait" | "square" | "landscape";
+export const ASPECTS = ["portrait", "square", "landscape"] as const;
+export type Aspect = (typeof ASPECTS)[number];
+
+/**
+ * Validates an aspect that came from a client.
+ *
+ * The provider indexes a size table with this. An unknown value read as
+ * `undefined` there and then threw a TypeError on `.width`, which surfaced to
+ * the person as a 502 with an internal message in it. `style` on the same
+ * request was already validated; this is the same guard for its neighbour.
+ */
+export function isAspect(value: unknown): value is Aspect {
+  return typeof value === "string" && (ASPECTS as readonly string[]).includes(value);
+}
 
 export type GeneratedImage = {
   /** Raw PNG bytes. */

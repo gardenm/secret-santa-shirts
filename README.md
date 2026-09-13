@@ -22,7 +22,8 @@ bundle for the group order. Everything is revealed afterwards.
 | Design editor: draw, text, upload, AI, preflight | Done |
 | Export bundle, reminder emails, reveal gallery | Done |
 
-`npm test` — 156 tests, all passing. `npm run build` passes.
+`npm test`, `npm run lint`, `npm run typecheck` and `npm run build` all pass. CI runs
+them on every push, plus a check that the migrations still match the schema.
 
 ## Setup
 
@@ -66,9 +67,18 @@ against PGlite, real Postgres compiled to WASM, in-process:
 
 ```bash
 npm test
+npm run lint
 npm run typecheck
 npm run build
 ```
+
+**Dates are the group's timezone, not the server's.** A deadline of
+`2026-12-01` means the *end* of December 1st in `EVENT_TIMEZONE` (default
+`America/Toronto`). Left to UTC it would have fallen at 7pm on November 30th in
+Toronto, refusing submissions the evening before people expected — and, because
+the cron advances state before planning reminders, the "today's the deadline"
+nudge could never fire at all. `src/lib/dates.ts` is the only place that
+converts between a calendar day and an instant.
 
 ## How it works
 
@@ -153,7 +163,10 @@ separate resvg behaviours fail silently in ways that look like success:
 
 Uploads and generated images are stored by opaque id (`src/lib/storage.ts`,
 Vercel Blob or a local directory) and served same-origin from
-`/api/assets/[id]`, so the canvas is never tainted.
+`/api/assets/[id]`, so the canvas is never tainted. Blobs are **private**: the
+only way to read one is through that route, which requires a session. A public
+blob URL is readable by anyone who has it, and URLs leak more easily than they
+look like they will.
 
 At submit time `inlineAssets` (`src/lib/svg-assets.ts`) rewrites every `<image>`
 href into a data URI, resolving ids **directly from storage with no HTTP
@@ -217,9 +230,28 @@ since each rejects the other's spelling.
 
 Use the Gateway for the deployment. Image generation is the only part of this
 that can run up a real bill, and a budget the provider enforces is a better
-backstop than the per-participant cap in our own code — that cap bounds calls,
-not dollars. **Set the budget in the Vercel dashboard**; there is no spend
-setting in this repo.
+backstop than the per-participant caps in our own code — those bound calls, not
+dollars. **Set the budget in the Vercel dashboard**; there is no spend setting
+in this repo.
+
+In-app, every paid call is metered and counted, not just generation. There are
+two allowances per person, because there are two different things to limit:
+
+| Allowance | Default | Covers |
+|---|---|---|
+| `generationCap` | 30 | New AI images — what a person thinks of as their allowance |
+| `assistCap` | 120 | Background removal and hosted upscaling |
+
+Kept separate because one generation quietly makes up to two assists of its
+own, and charging somebody three of their thirty images for one picture would
+be a strange thing to explain. Previously only generation was counted at all,
+so the editor's "remove background" button could be clicked all afternoon at
+about a cent a time.
+
+The pipeline reports its own paid calls (`imagegen/meter.ts`) rather than each
+route guessing: whether an upscale goes to a hosted model or is resampled
+locally for free depends on the scale factor, and only `upscaleToFit` knows. A
+call that fails and falls back records nothing.
 
 ### Prompting away from slop
 
@@ -301,7 +333,20 @@ list in two places:
 - `requireSession` re-checks the invite list on **every request**, because the
   create hook only fires once. Removing someone from the invite list therefore
   revokes their access immediately rather than leaving it until their session
-  expires — and unlike a framework hook, this layer is covered by tests.
+  expires — and unlike a framework hook, this layer is covered by tests. There
+  is a **Remove** button on `/admin` for it, available until the draw runs.
+
+Pages use `requirePageSession`, which **redirects** to `/signin` rather than
+throwing. Next strips error messages in production, so a thrown error rendered
+as "Application error: a server-side exception has occurred" — which is what
+someone saw when their session had simply expired. API routes keep the throwing
+`requireSession`; they already catch it and return 401.
+
+Sign-in is throttled to one email per address per minute (`signin-policy.ts`).
+Better Auth's own limiter runs inside its HTTP handler, and the server action
+calls `auth.api.signInMagicLink` directly, so nothing was limiting anything.
+Links last an hour; the default is five minutes, which the email's own wording
+contradicted.
 
 So there is no second allowlist to maintain, and someone who finds the URL
 cannot join. Assignments are read only

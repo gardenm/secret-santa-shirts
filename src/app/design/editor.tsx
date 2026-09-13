@@ -24,6 +24,7 @@ type Props = {
   initialCanvasJson: unknown;
   status: string;
   aiEnabled: boolean;
+  allowance: { generations: number; assists: number };
 };
 
 const FONTS = ["Liberation Sans", "Liberation Serif", "DejaVu Sans"];
@@ -44,6 +45,8 @@ export function Editor(props: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [style, setStyle] = useState<PrintStyle>("screenprint");
+  const [generationsLeft, setGenerationsLeft] = useState(props.allowance.generations);
+  const [assistsLeft, setAssistsLeft] = useState(props.allowance.assists);
 
   // ---- setup ------------------------------------------------------------
 
@@ -68,8 +71,30 @@ export function Editor(props: Props) {
       });
     }
 
+    /**
+     * Fit the canvas to the screen with CSS only.
+     *
+     * The backing store stays at design size - 825x1050 for a tee - so exports
+     * are pixel-for-pixel unaffected; only the displayed size changes. Without
+     * this the canvas is wider than a phone and the page scrolls sideways,
+     * which is most of how this will actually get used.
+     */
+    const fit = () => {
+      const available = elementRef.current?.parentElement?.parentElement?.clientWidth;
+      if (!available) return;
+      const scale = Math.min(1, (available - 16) / props.canvas.width);
+      canvas.setDimensions(
+        { width: `${props.canvas.width * scale}px`, height: `${props.canvas.height * scale}px` },
+        { cssOnly: true },
+      );
+    };
+
+    fit();
+    window.addEventListener("resize", fit);
+
     setReady(true);
     return () => {
+      window.removeEventListener("resize", fit);
       canvas.dispose();
       canvasRef.current = null;
     };
@@ -210,6 +235,7 @@ export function Editor(props: Props) {
     setBusy(null);
 
     if (!response.ok) return setError(payload.error);
+    if (typeof payload.remaining === "number") setGenerationsLeft(payload.remaining);
     addImage(payload.url);
   }
 
@@ -264,6 +290,7 @@ export function Editor(props: Props) {
         setBusy(null);
         return setError(payload.error);
       }
+      if (typeof payload.assistsLeft === "number") setAssistsLeft(payload.assistsLeft);
       await image.setSrc(payload.url, { crossOrigin: "anonymous" });
     }
 
@@ -426,9 +453,20 @@ export function Editor(props: Props) {
                 </p>
               </div>
 
-              <button className="btn-secondary" onClick={generate} disabled={Boolean(busy)}>
-                Generate
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  className="btn-secondary"
+                  onClick={generate}
+                  disabled={Boolean(busy) || generationsLeft <= 0}
+                >
+                  Generate
+                </button>
+                <span className="text-xs text-ink/50">
+                  {generationsLeft > 0
+                    ? `${generationsLeft} ${generationsLeft === 1 ? "image" : "images"} left`
+                    : "No image generations left — you can still upload or draw."}
+                </span>
+              </div>
 
               <p className="text-xs text-ink/50">
                 Generated art is automatically cut out from its background and scaled up for
@@ -450,6 +488,7 @@ export function Editor(props: Props) {
               previewUrl={previewUrl}
               onRemedy={applyRemedy}
               busy={Boolean(busy)}
+              assistsLeft={assistsLeft}
             />
           )}
         </div>
